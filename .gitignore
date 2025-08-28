@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# VS Code
+.vscode/
+
+# Streamlit
+.streamlit/
+
+# Data artifacts (not versioned)
+processing_output/
+water_balance_output/
+GLEAM/
+Raw_Imerg/
+Bathymetry/
+
+# Sentinel raw data (exclude from repo but keep folder structure via .gitkeep)
+# Support both spellings just in case
+Santinel/*
+!Santinel/.gitkeep
+Sentinel/*
+!Sentinel/.gitkeep
+
+# Ignore browser export folders with many TIFFs anywhere in the tree
+**/Browser_images*/
+
+# Whitelist essential small artifacts
+!processing_output/area_volume_curve.csv
+!water_balance_output/water_balance_final.csv
+!GLEAM/processed/gleam_summary_all_years.csv
+!precipitation_timeseries.csv
+
+# OS
+.DS_Store
+Thumbs.db
