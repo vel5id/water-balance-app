@@ -13,9 +13,23 @@ __pycache__/
 # Data artifacts (not versioned)
 processing_output/
 water_balance_output/
+water_balance_results/
 GLEAM/
 Raw_Imerg/
 Bathymetry/
+
+# DEM artifacts
+Hillshade + DEM/
+
+# Storage: ignore everything by default, then allow-list specific analytics CSVs
+wbm/storage/**
+!wbm/storage/temperature/
+!wbm/storage/precipitation/
+!wbm/storage/runoff/
+!wbm/storage/swe/
+
+# Ignore local credentials and internal meta
+wbm/storage/meta/
 
 # Sentinel raw data (exclude from repo but keep folder structure via .gitkeep)
 # Support both spellings just in case
@@ -27,11 +41,21 @@ Sentinel/*
 # Ignore browser export folders with many TIFFs anywhere in the tree
 **/Browser_images*/
 
-# Whitelist essential small artifacts
+# Ignore minimal_model (separate repo)
+minimal_model/
+
+# Whitelist essential small artifacts (analytics-ready)
 !processing_output/area_volume_curve.csv
-!water_balance_output/water_balance_final.csv
+!water_balance_output/*.csv
+!water_balance_results/*.csv
 !GLEAM/processed/gleam_summary_all_years.csv
 !precipitation_timeseries.csv
+
+# Whitelist ERA5 daily CSV drivers if present (exclude everything else under wbm/storage)
+!wbm/storage/temperature/era5_land_temperature_daily.csv
+!wbm/storage/precipitation/era5_land_total_precipitation_daily.csv
+!wbm/storage/runoff/era5_land_runoff_daily.csv
+!wbm/storage/swe/era5_land_swe_daily.csv
 
 # OS
 .DS_Store
