@@ -1,0 +1,16 @@
+# environment.yml
+name: isolines_gpu
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - pandas
+  - matplotlib
+  - scipy
+  - tqdm
+  - scikit-learn
+  - cudatoolkit=11.8        # для работы PyTorch на вашей 4080
+  - pytorch=2.1             # GPU‑сборка
+  - gpytorch                # конда‑фордж
