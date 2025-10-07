@@ -887,7 +887,20 @@ else:
         with vis_col2:
             alpha = st.slider("Water overlay opacity", 0.1, 0.9, 0.5, 0.05)
             idx = st.slider("Visualization day", 0, len(scenario_df) - 1, value=len(scenario_df) - 1)
-            dem_view = st.selectbox("DEM view", ["Grayscale (low-dark)", "Grayscale (low-bright)", "Hillshade"], index=2)
+            dem_view = st.selectbox(
+                "Base background",
+                [
+                    "Hillshade",
+                    "Grayscale (low-dark)",
+                    "Grayscale (low-bright)",
+                    "Terrain colors",
+                    "Bathymetric",
+                    "Flat",
+                    "None",
+                ],
+                index=0,
+                help="Выберите стиль подложки: Terrain/Bathymetric дают цветовую шкалу; None — прозрачная (условно) подложка без артефактов облачности.",
+            )
             mask_mode = st.selectbox(
                 "Water mask mode",
                 ["Simulated level", "Depth & NDWI"],  # make simulated level the primary/default
@@ -914,9 +927,7 @@ else:
         norm = (dem_disp - vmin) / max(1e-6, (vmax - vmin))
         norm = np.clip(norm, 0.0, 1.0)
 
-        if dem_view == "Grayscale (low-bright)":
-            vis = 1.0 - norm  # invert so depressions appear bright
-        elif dem_view == "Hillshade":
+        if dem_view == "Hillshade":
             z = np.nan_to_num(dem_disp, nan=float(np.nanmedian(dem_disp)))
             gx, gy = np.gradient(z)
             slope = np.pi/2 - np.arctan(np.hypot(gx, gy))
@@ -926,11 +937,102 @@ else:
             hs = np.sin(alt) * np.sin(slope) + np.cos(alt) * np.cos(slope) * np.cos(az - aspect)
             hs = (hs - hs.min()) / (hs.max() - hs.min() + 1e-6)
             vis = hs
-        else:
+        elif dem_view == "Grayscale (low-bright)":
+            vis = 1.0 - norm  # invert so depressions appear bright
+        elif dem_view == "Grayscale (low-dark)":
             vis = norm
+        elif dem_view == "Terrain colors":
+            # Simple terrain palette: dark green -> green -> brown -> light brown -> near white
+            # Build a LUT with 256 entries
+            g = norm
+            # Define control points (value, RGB)
+            ctrl = [
+                (0.0, (20, 70, 20)),
+                (0.25, (50, 120, 50)),
+                (0.5, (150, 110, 60)),
+                (0.75, (200, 170, 120)),
+                (1.0, (245, 245, 240)),
+            ]
+            cp_vals = np.array([c[0] for c in ctrl])
+            cp_cols = np.array([c[1] for c in ctrl], dtype=float)
+            def _interp_cols(x):
+                x = np.clip(x, 0, 1)
+                # find indices
+                idx = np.searchsorted(cp_vals, x, side='right') - 1
+                idx = np.clip(idx, 0, len(cp_vals) - 2)
+                left_v = cp_vals[idx]
+                right_v = cp_vals[idx + 1]
+                w = np.where((right_v - left_v) > 0, (x - left_v) / (right_v - left_v), 0)
+                left_c = cp_cols[idx]
+                right_c = cp_cols[idx + 1]
+                return (left_c * (1 - w)[..., None] + right_c * w[..., None]) / 255.0
+            color_vis = _interp_cols(g)
+            vis = None  # flag to skip grayscale replication
+        elif dem_view == "Bathymetric":
+            # Separate negative (depth) and positive (land) ranges if present
+            z = dem_disp.copy()
+            # Normalize land part
+            land = z.copy()
+            # Depth palette: deep = dark blue, shallow = light cyan
+            # Land palette: reuse terrain gradient simplified
+            land_min = np.nanmin(land)
+            land_max = np.nanmax(land)
+            if land_max - land_min < 1e-6:
+                land_norm = np.zeros_like(land)
+            else:
+                land_norm = (land - land_min) / (land_max - land_min)
+            depth_mask = (z < 0) & ~np.isnan(z)
+            land_mask = (z >= 0) & ~np.isnan(z)
+            color_vis = np.zeros(z.shape + (3,), dtype=float)
+            if depth_mask.any():
+                depths = z[depth_mask]
+                # more negative -> deeper
+                dmin = depths.min()
+                dmax = depths.max()  # close to 0
+                span = max(1e-6, dmax - dmin)
+                dnorm = (depths - dmin) / span
+                # Map to blue gradient
+                # deep: (0, 25, 90), mid: (0,90,160), shallow: (120,200,255)
+                # Use quadratic easing for brightness
+                def blend(c1, c2, w):
+                    return c1 * (1 - w) + c2 * w
+                mid_color = np.array([0, 90, 160], dtype=float)
+                deep_color = np.array([0, 25, 90], dtype=float)
+                shallow_color = np.array([120, 200, 255], dtype=float)
+                # Two segment blend
+                w_mid = np.clip(dnorm * 1.4, 0, 1)
+                col_mid = blend(deep_color, mid_color, w_mid[:, None])
+                w_shal = np.clip((dnorm - 0.5) * 2, 0, 1)
+                col_depth = blend(col_mid, shallow_color, w_shal[:, None]) / 255.0
+                color_vis[depth_mask] = col_depth
+            if land_mask.any():
+                ln = land_norm[land_mask]
+                # Terrain simplified: green -> brown -> light
+                c1 = np.array([40, 110, 40], dtype=float)
+                c2 = np.array([160, 120, 60], dtype=float)
+                c3 = np.array([240, 235, 225], dtype=float)
+                w = ln
+                mid = np.clip(w * 1.6, 0, 1)
+                col_land = c1 * (1 - mid)[:, None] + c2 * mid[:, None]
+                w2 = np.clip((w - 0.5) * 2, 0, 1)
+                col_land = col_land * (1 - w2)[:, None] + c3 * w2[:, None]
+                color_vis[land_mask] = col_land / 255.0
+            vis = None
+        elif dem_view == "Flat":
+            color_vis = np.ones(dem_disp.shape + (3,), dtype=float) * 0.92
+            vis = None
+        elif dem_view == "None":
+            color_vis = np.zeros(dem_disp.shape + (3,), dtype=float)
+            vis = None
+        else:
+            vis = norm  # fallback grayscale
 
-        base_rgb = (vis[..., None] * 255).astype(np.uint8)
-        base_rgb = np.repeat(base_rgb, 3, axis=2)
+        if vis is not None:
+            base_rgb = (vis[..., None] * 255).astype(np.uint8)
+            base_rgb = np.repeat(base_rgb, 3, axis=2)
+        else:
+            # color_vis already RGB in 0..1
+            base_rgb = (np.clip(color_vis, 0, 1) * 255).astype(np.uint8)
 
         # Water mask options
         if mask_mode == "Depth & NDWI":
