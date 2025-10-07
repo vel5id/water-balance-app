@@ -511,7 +511,14 @@ else:
     # --- Long-term trends P & ET ---
     with st.expander("Long-term P & ET trends", expanded=False):
         years_back = st.slider("Years back", 3, 30, 10, 1)
-        freq = st.selectbox("Aggregation", ["M", "A"], index=0, help="M=monthly mean, A=annual mean")
+        # Pandas deprecates 'M' (month end) in favor of 'ME'; we keep UI labels but map internally.
+        freq_label = st.selectbox(
+            "Aggregation",
+            ["Monthly", "Annual"],
+            index=0,
+            help="Monthly=month-end mean (ME), Annual=calendar year (A)"
+        )
+        freq = 'ME' if freq_label == 'Monthly' else 'A'
         end_anchor = pd.Timestamp.today().normalize()
 
         p_agg = aggregate_series(era5_df, "date", "precip_mm", freq=freq, years_back=years_back, end_anchor=end_anchor)
@@ -572,7 +579,8 @@ else:
                 })
 
                 if agg_mode == "Monthly":
-                    trend_plot_df = trend_df.resample("M").mean()
+                    # Use 'ME' (month end) instead of deprecated 'M'
+                    trend_plot_df = trend_df.resample("ME").mean()
                 else:
                     trend_plot_df = trend_df
 
@@ -581,7 +589,7 @@ else:
 
                 # Scatter: temperature vs snow depth (optionally monthly mean)
                 if agg_mode == "Monthly":
-                    scatter_df = base.resample("M").mean().reset_index()
+                    scatter_df = base.resample("ME").mean().reset_index()
                 else:
                     scatter_df = base.reset_index()
                 scatter_df["year"] = scatter_df["date"].dt.year
@@ -648,7 +656,7 @@ else:
                     "ratio_runoff_to_temp": ratio_r,
                 })
                 if agg_r == "Monthly":
-                    plot_run_df = run_tr_df.resample("M").mean()
+                    plot_run_df = run_tr_df.resample("ME").mean()
                 else:
                     plot_run_df = run_tr_df
                 st.line_chart(plot_run_df)
@@ -661,7 +669,7 @@ else:
                 if not lr_corr.empty:
                     st.line_chart(lr_corr.set_index("lag")["corr"], height=180)
                 # Scatter runoff vs temperature
-                rb_scatter = (rbase.resample("M").mean() if agg_r == "Monthly" else rbase).reset_index()
+                rb_scatter = (rbase.resample("ME").mean() if agg_r == "Monthly" else rbase).reset_index()
                 rb_scatter["year"] = rb_scatter["date"].dt.year
                 fig_run_sc = px.scatter(rb_scatter, x="t2m_c", y="runoff_mm", color="year", trendline="ols", title="Temperature vs Runoff")
                 st.plotly_chart(fig_run_sc, use_container_width=True)
@@ -705,13 +713,13 @@ else:
                     "P_minus_ET": water_balance_index,
                 })
                 if agg_pe == "Monthly":
-                    diag_plot_df = diag_df.resample("M").mean()
+                    diag_plot_df = diag_df.resample("ME").mean()
                 else:
                     diag_plot_df = diag_df
                 st.line_chart(diag_plot_df)
 
                 # Heatmap of anomalies (monthly) for P-ET
-                anom = water_balance_index.resample("M").mean()
+                anom = water_balance_index.resample("ME").mean()
                 anom_mean = anom.groupby(anom.index.month).transform(lambda x: x.mean())
                 anom_std = anom.groupby(anom.index.month).transform(lambda x: x.std(ddof=0))
                 standardized = (anom - anom_mean) / anom_std.replace(0, np.nan)
@@ -1013,7 +1021,8 @@ else:
             caption = f"{scenario_df['date'].iloc[idx].date()} | Volume {v_sel:.1f} mcm | DEM: {dem_src_note} | Mask: {mask_mode}"
             if mask_mode == "Simulated level" and z_level is not None:
                 caption += f" | Level {z_level:.2f} m"
-            st.image(over_img, caption=caption, use_column_width=True)
+            # use_column_width deprecated; replaced by use_container_width
+            st.image(over_img, caption=caption, use_container_width=True)
             # DEM stats for verification
             dem_stats = np.array(dem, dtype="float32")
             if nodata is not None:
