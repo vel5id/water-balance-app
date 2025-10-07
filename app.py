@@ -880,8 +880,17 @@ else:
             alpha = st.slider("Water overlay opacity", 0.1, 0.9, 0.5, 0.05)
             idx = st.slider("Visualization day", 0, len(scenario_df) - 1, value=len(scenario_df) - 1)
             dem_view = st.selectbox("DEM view", ["Grayscale (low-dark)", "Grayscale (low-bright)", "Hillshade"], index=2)
-            mask_mode = st.selectbox("Water mask mode", ["Depth & NDWI", "Simulated level"], index=0,
-                                     help="Depth & NDWI: water where DEM depth<0 AND NDWI=water. Simulated level: threshold by volume→elevation (requires elevation DEM).")
+            mask_mode = st.selectbox(
+                "Water mask mode",
+                ["Simulated level", "Depth & NDWI"],  # make simulated level the primary/default
+                index=0,
+                help=(
+                    "Simulated level (default): динамическая площадь по объёму. "
+                    "Depth & NDWI: статичное пересечение глубины (dem<0) и водного NDWI маска."
+                ),
+            )
+            if mask_mode == "Simulated level":
+                st.caption("По умолчанию используется динамический режим 'Simulated level'.")
 
         # Pick selected day volume and compute water level
         v_sel = float(scenario_df["volume_mcm"].iloc[idx])
@@ -934,17 +943,63 @@ else:
             if nodata is not None:
                 water_mask = water_mask & ~np.isnan(dem_disp)
         else:
-            # Simulated level by volume→elevation assumes DEM is elevation; if DEM is depths (min<0, max≈0), fallback to dem<0
-            if z_level is not None and (np.nanmin(dem_disp) >= 0 or np.nanmax(dem_disp) > 5):
-                # Likely an elevation DEM
+            # Simulated level mode. Support two cases:
+            # 1) Elevation DEM (positive elevations) -> threshold by elevation (existing behaviour)
+            # 2) Depth DEM (negative values for submerged cells, 0≈shore) -> derive dynamic extent
+            dem_min = float(np.nanmin(dem_disp))
+            dem_max = float(np.nanmax(dem_disp))
+            is_elevation = (dem_min >= 0) or (dem_max > 5)  # heuristic
+
+            if z_level is not None and is_elevation:
+                # Elevation-based: cells with elevation <= water surface
                 water_mask = (dem_disp <= z_level)
                 if nodata is not None:
                     water_mask = water_mask & ~np.isnan(dem_disp)
             else:
-                st.info("Dynamic level requires elevation DEM; using depth-only water (dem<0).")
-                water_mask = (dem_disp < 0)
-                if nodata is not None:
-                    water_mask = water_mask & ~np.isnan(dem_disp)
+                # Depth-based dynamic area shrink/expand.
+                # We approximate target area fraction using simulated area_km2 vs max curve area.
+                try:
+                    target_area_km2 = float(scenario_df["area_km2"].iloc[idx])
+                    max_area_curve = float(areas.max()) if 'areas' in globals() else target_area_km2
+                    frac = 0.0 if max_area_curve <= 0 else float(np.clip(target_area_km2 / max_area_curve, 0.0, 1.0))
+                except Exception:
+                    frac = 1.0
+
+                # Cache depth values only once (cells that can ever be wet: dem<0)
+                if '_depth_values' not in st.session_state or '_depth_mask_template' not in st.session_state or st.session_state.get('_depth_shape') != dem_disp.shape:
+                    depth_mask_template = (dem_disp < 0) & ~np.isnan(dem_disp)
+                    depth_values = dem_disp[depth_mask_template]
+                    st.session_state._depth_values = depth_values
+                    st.session_state._depth_mask_template = depth_mask_template
+                    st.session_state._depth_shape = dem_disp.shape
+                depth_values = st.session_state._depth_values
+                depth_mask_template = st.session_state._depth_mask_template
+
+                if depth_values.size == 0:
+                    # Fallback: static (no negative depths found)
+                    water_mask = (dem_disp < 0)
+                    if nodata is not None:
+                        water_mask = water_mask & ~np.isnan(dem_disp)
+                else:
+                    # Depths are negative; to shrink area with lower volume, we keep only deeper cells.
+                    # For fraction f, choose threshold at quantile f of sorted depths (ascending: more negative first).
+                    # Ensure numerical stability for extreme fracs.
+                    f = float(np.clip(frac, 0.0, 1.0))
+                    if f <= 0.0:
+                        water_mask = np.zeros_like(dem_disp, dtype=bool)
+                    elif f >= 0.9999:
+                        water_mask = depth_mask_template
+                    else:
+                        try:
+                            thresh = float(np.quantile(depth_values, f))  # quantile f ⇒ include deepest up to that depth
+                        except Exception:
+                            thresh = float(depth_values.max())  # should be near 0
+                        water_mask = (dem_disp <= thresh) & depth_mask_template
+                    if nodata is not None:
+                        water_mask = water_mask & ~np.isnan(dem_disp)
+
+                # Optional: show a subtle caption with mode info (avoid spam each rerun)
+                st.caption(f"Dynamic depth mode: area fraction={frac:.3f}")
 
         water_color = np.array([30, 144, 255], dtype=np.uint8)  # DodgerBlue
         over = base_rgb.copy()
