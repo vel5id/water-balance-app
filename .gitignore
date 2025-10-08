@@ -51,6 +51,20 @@ minimal_model/
 !GLEAM/processed/gleam_summary_all_years.csv
 !precipitation_timeseries.csv
 
+# After directory restructuring these outputs now live under processed_data/.
+# We keep large rasters/images ignored but version the lightweight tabular artifacts.
+!processed_data/
+!processed_data/processing_output/
+!processed_data/processing_output/area_volume_curve.csv
+!processed_data/water_balance_output/
+!processed_data/water_balance_output/*.csv
+!processed_data/water_balance_output/water_balance_statistics.txt
+
+# Re-ignore heavy binary artifacts inside processed_data to avoid bloating the repo
+processed_data/processing_output/*.tif
+processed_data/processing_output/*.png
+processed_data/water_balance_output/*.png
+
 # Whitelist ERA5 daily CSV drivers if present (exclude everything else under wbm/storage)
 !wbm/storage/temperature/era5_land_temperature_daily.csv
 !wbm/storage/precipitation/era5_land_total_precipitation_daily.csv
