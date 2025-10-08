@@ -1,0 +1,45 @@
+name: geoinform_sci
+channels:
+  - conda-forge
+  - defaults
+
+# Focused geo / scientific stack for bathymetry & hypsometry building
+# Usage:
+#   conda env create -f geoinform_sci.yml
+#   conda activate geoinform_sci
+#   python Bathymetry/Main/Analysis_Isobars_Full.py --grid_steps 100,50,20 --no_plots
+
+dependencies:
+  - python=3.10
+  - pip
+  # Core numeric / scientific
+  - numpy
+  - pandas
+  - scipy
+  - numba
+  - tqdm
+  # Geospatial raster/vector
+  - gdal
+  - rasterio
+  - geopandas
+  - shapely
+  - fiona
+  - pyproj
+  - rtree
+  - affine
+  # Plotting / visualization
+  - matplotlib
+  - seaborn
+  - pillow
+  # Optimization / stats (optional future use)
+  - scikit-learn
+  - statsmodels
+  # Jupyter (optional exploratory work)
+  - jupyterlab
+  - ipykernel
+  # Performance helpers
+  - pip:
+      - rich
+      - pyogrio  # faster IO path for some geopandas ops
+      - rasterstats
+      - fastparquet

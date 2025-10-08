@@ -158,5 +158,23 @@ docker run --rm -p 8501:8501 -e DATA_ROOT=/data -v /host/wbm-data:/data wbm-app
 - RasterIO/GDAL errors on Linux: install GDAL runtime (`apt-get install gdal-bin libgdal-dev`) or use a base image with GDAL.
 - Map water extent looks inverted: switch DEM view or ensure you’re in “Depth & NDWI” mode (the integrated DEM stores depths as negative values inside water).
 
+## Backtesting / Validation
+
+Для проверки прогностической состоятельности модели добавлен документ `URGENT_BACKTEST_2024.md`.
+
+Содержит:
+- Процедуру построения прогноза 2024 года по данным 2022-2023
+- Метрики оценки (MAE, RMSE, Bias, MAPE, NSE)
+- Чеклист и критерии успешности
+- Рекомендации по визуализации и отчёту
+
+Быстрый старт:
+1. Подготовьте очищенный набор 2022-01-01 .. 2023-12-31
+2. Запустите deterministic прогноз осадков и испарения на 2024 через `build_robust_season_trend_series`
+3. Прогоните модель объёма, сравните с фактами 2024
+4. Сведите метрики и графики в `backtest_2024_report.md`
+
+(Опционально) Создайте скрипт автоматизации `backtest_2024.py` как описано в документе.
+
 ## License
 Proprietary/internal use. Update as appropriate for your organization.
