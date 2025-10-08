@@ -137,6 +137,7 @@ def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_
         caption = f"{scenario_df['date'].iloc[idx].date()} | Volume {v_sel:.1f} mcm | DEM: {dem_src_note} | Mask: {mask_mode}"
         if mask_mode == "Simulated level" and z_level is not None:
             caption += f" | Level {z_level:.2f} m"
-        st.image(over_img, caption=caption, width="stretch")
+        # width expects an int; using use_container_width for responsive layout
+        st.image(over_img, caption=caption, use_container_width=True)
         dem_stats = dem_disp.copy(); dmin=float(np.nanmin(dem_stats)); dmax=float(np.nanmax(dem_stats)); dmean=float(np.nanmean(dem_stats))
         st.caption(f"DEM stats — min: {dmin:.2f}, max: {dmax:.2f}, mean: {dmean:.2f}")

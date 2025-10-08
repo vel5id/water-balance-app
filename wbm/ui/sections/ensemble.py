@@ -131,7 +131,8 @@ def render_ensemble(era5_df: pd.DataFrame, vol_to_area, p_clim, et_clim, init_vo
         with st.expander("Ensemble diagnostics", expanded=False):
             acf_df = compute_acf(residual_hist.to_numpy(), max_lag=min(30, max(5,residual_hist.size//4))) if residual_hist.size else None
             if acf_df is not None and not acf_df.empty:
-                st.dataframe(acf_df, width="stretch", height=180)
+                # width parameter must be int; switch to container-based sizing
+                st.dataframe(acf_df, use_container_width=True, height=180)
                 st.caption("ACF: автокорреляция по лагам")
                 rec_block = recommend_block_length(acf_df, residual_hist.size)
                 st.caption(f"Recommended block length (ACF threshold): {rec_block}")

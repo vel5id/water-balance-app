@@ -47,7 +47,12 @@ def render_p_et_diag(era5_df: pd.DataFrame):
         df_heat["month"] = df_heat["date"].dt.month
         pivot = df_heat.pivot(index="year", columns="month", values="z")
         st.markdown("**Standardized anomaly (z-score) of (P-ET) by month**")
-        st.dataframe(pivot.style.background_gradient(cmap="coolwarm", axis=None), width="stretch")
+        # width expects an int; previously used a placeholder string "stretch" which causes TypeError.
+        # Use container-based sizing instead.
+        st.dataframe(
+            pivot.style.background_gradient(cmap="coolwarm", axis=None),
+            use_container_width=True,
+        )
         quant = pet_ratio.dropna().quantile([0.05,0.25,0.5,0.75,0.95]).to_dict()
         st.caption("P/ET ratio quantiles: " + ", ".join([f"{int(k*100)}%={v:.2f}" for k,v in quant.items()]))
         quant_wb = water_balance_index.dropna().quantile([0.05,0.5,0.95]).to_dict()

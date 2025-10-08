@@ -495,14 +495,14 @@ else:
     col1, col2 = st.columns([2, 1])
     with col1:
         fig_ts = timeseries_figure(plot_base_s if plot_base_s is not None else plot_base, plot_scena_s)
-        st.plotly_chart(fig_ts, width="stretch")
+    st.plotly_chart(fig_ts, use_container_width=True)
     with col2:
         st.metric("End Volume (mcm)", f"{plot_scena['volume_mcm'].iloc[-1]:.1f}")
         st.metric("Min Volume (mcm)", f"{plot_scena['volume_mcm'].min():.1f}")
         st.metric("Max Volume (mcm)", f"{plot_scena['volume_mcm'].max():.1f}")
 
     st.subheader("Daily P/ET volumes")
-    st.plotly_chart(stacked_fluxes_figure(viz_df), width="stretch")
+    st.plotly_chart(stacked_fluxes_figure(viz_df), use_container_width=True)
     # Hint if precipitation is zero
     if "precipitation_volume_mcm" in viz_df.columns and float(viz_df["precipitation_volume_mcm"].abs().sum()) == 0.0:
         st.info("Precipitation volumes are zero. Check ERA5 processing (precip_mm). Re-run era5_process.py or switch driver mode.")
@@ -565,7 +565,7 @@ else:
             p_tau, p_p = kendall_significance(p_agg)
             et_tau, et_p = kendall_significance(et_agg)
 
-            st.plotly_chart(make_trend_comparison_figure(p_agg, et_agg, p_slope_py, p_inter, et_slope_py, et_inter), width="stretch")
+            st.plotly_chart(make_trend_comparison_figure(p_agg, et_agg, p_slope_py, p_inter, et_slope_py, et_inter), use_container_width=True)
             col_t1, col_t2 = st.columns(2)
             with col_t1:
                 st.metric("P slope (mm/day/yr)", f"{p_slope_py:.4f}")
@@ -650,12 +650,12 @@ else:
                     st.caption(f"Ratio (snow_trend / temp_trend) quantiles: 5%={q.get(0.05):.3f}, 50%={q.get(0.5):.3f}, 95%={q.get(0.95):.3f}")
                     # Year-wise quantile summary
                     ratio_yearly = ratio_clean.groupby(ratio_clean.index.year).describe(percentiles=[0.05,0.25,0.5,0.75,0.95])
-                    st.dataframe(ratio_yearly[["mean","std","min","5%","25%","50%","75%","95%","max"]].rename_axis("year"), width="stretch")
+                    st.dataframe(ratio_yearly[["mean","std","min","5%","25%","50%","75%","95%","max"]].rename_axis("year"), use_container_width=True)
                     # Boxplot across years
                     ry = ratio_clean.to_frame("ratio").reset_index()
                     ry["year"] = ry["date"].dt.year
                     fig_box = px.box(ry, x="year", y="ratio", points="suspectedoutliers", title="Year-wise distribution of snow/temp trend ratio")
-                    st.plotly_chart(fig_box, width="stretch")
+                    st.plotly_chart(fig_box, use_container_width=True)
                 st.markdown("_Примечание_: Значения отношения могут быть неустойчивыми при близком к нулю тренде температуры. Используйте клиппинг для стабилизации визуализации.")
 
     # --- Runoff vs Temperature analytical trends ---
@@ -766,7 +766,7 @@ else:
                 df_heat["month"] = df_heat["date"].dt.month
                 pivot = df_heat.pivot(index="year", columns="month", values="z")
                 st.markdown("**Standardized anomaly (z-score) of (P-ET) by month**")
-                st.dataframe(pivot.style.background_gradient(cmap="coolwarm", axis=None), width="stretch")
+                st.dataframe(pivot.style.background_gradient(cmap="coolwarm", axis=None), use_container_width=True)
 
                 # Distribution and quantiles
                 quant = pet_ratio.dropna().quantile([0.05,0.25,0.5,0.75,0.95]).to_dict()
@@ -849,7 +849,7 @@ else:
                             yaxis_title=y_var,
                             legend_title="Year",
                         )
-                        st.plotly_chart(fig_phase, width="stretch")
+                        st.plotly_chart(fig_phase, use_container_width=True)
                         st.caption("Петля показывает внутригодовую траекторию. Сравнение разных лет помогает выявлять смещения фенологии / фазовых переходов.")
 
 
@@ -962,14 +962,14 @@ else:
                                              line=dict(color="#1f77b4", width=2)))
                     fan.update_layout(title="Ensemble Volume Forecast", template="plotly_white",
                                       xaxis_title="Date", yaxis_title="Volume (million m³)")
-                    st.plotly_chart(fan, width="stretch")
+                    st.plotly_chart(fan, use_container_width=True)
                     # Diagnostics expander
                     with st.expander("Ensemble diagnostics", expanded=False):
                         from wbm.seasonal import compute_acf, recommend_block_length, theil_sen_trend_ci_boot
                         st.markdown("**Residual ACF & Trend CI**")
                         acf_df = compute_acf(residual_hist.to_numpy(), max_lag=min(30, max(5, residual_hist.size//4))) if residual_hist.size else None
                         if acf_df is not None and not acf_df.empty:
-                            st.dataframe(acf_df, width="stretch", height=180)
+                            st.dataframe(acf_df, use_container_width=True, height=180)
                             st.caption("ACF: автокорреляция по лагам (после удаления сезонности+тренда)")
                             rec_block = recommend_block_length(acf_df, residual_hist.size)
                             st.caption(f"Recommended block length (ACF threshold): {rec_block}")
@@ -1247,8 +1247,8 @@ else:
             caption = f"{scenario_df['date'].iloc[idx].date()} | Volume {v_sel:.1f} mcm | DEM: {dem_src_note} | Mask: {mask_mode}"
             if mask_mode == "Simulated level" and z_level is not None:
                 caption += f" | Level {z_level:.2f} m"
-            # use_column_width & use_container_width deprecated; now using width="stretch"
-            st.image(over_img, caption=caption, width="stretch")
+            # switched to use_container_width for compatibility
+            st.image(over_img, caption=caption, use_container_width=True)
             # DEM stats for verification
             dem_stats = np.array(dem, dtype="float32")
             if nodata is not None:
