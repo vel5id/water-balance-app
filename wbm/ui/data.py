@@ -23,7 +23,8 @@ def ensure_datetime(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
 
 
 def load_all(DATA_ROOT: str, area_volume_curve_path: str, era5_db: str, era5_csv: str) -> LoadedData:
-    OUTPUT_DIR = os.path.join(DATA_ROOT, "water_balance_output")
+    # Adjust for new directory layout (processed_data/*)
+    OUTPUT_DIR = os.path.join(DATA_ROOT, "processed_data", "water_balance_output")
     balance_df, _gleam_unused, _imerg_unused, curve_df = load_baseline(
         OUTPUT_DIR, "", "", area_volume_curve_path
     )
@@ -35,7 +36,8 @@ def load_all(DATA_ROOT: str, area_volume_curve_path: str, era5_db: str, era5_csv
         era5_df = load_era5_daily(era5_csv)
 
     if era5_df.empty:
-        raw_nc_root = os.path.join(DATA_ROOT, "raw_nc")
+        # New location of raw_nc under raw_data/ hierarchy
+        raw_nc_root = os.path.join(DATA_ROOT, "raw_data", "raw_nc")
         if os.path.exists(raw_nc_root):
             era5_df = load_era5_from_raw_nc_dbs(raw_nc_root)
 

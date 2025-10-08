@@ -3,12 +3,25 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
+from typing import Callable, Optional
+try:
+    from wbm.i18n import Translator, DEFAULT_LANG
+except Exception:
+    class Translator:  # type: ignore
+        def __init__(self, lang: str='ru'): self.lang=lang
+        def __call__(self, key: str, **fmt): return key if not fmt else key
+    DEFAULT_LANG='ru'
 
 __all__ = ["render_phase_plots"]
 
-def render_phase_plots(era5_df: pd.DataFrame):
-    with st.expander("Seasonal Phase (Loop) Plots", expanded=False):
-        st.markdown("Годовые сезонные петли для пар переменных.")
+def render_phase_plots(era5_df: pd.DataFrame, tr: Optional[Callable[[str], str]] = None):
+    if tr is None:
+        lang = getattr(st.session_state, 'lang', DEFAULT_LANG)
+        try:
+            tr = Translator(lang)
+        except Exception:
+            tr = lambda k, **_: k  # type: ignore
+    with st.expander(tr("phase_plots"), expanded=False):
         if era5_df is None or era5_df.empty or "date" not in era5_df.columns:
             st.info("ERA5 dataframe is empty or lacks date column.")
             return
@@ -20,17 +33,17 @@ def render_phase_plots(era5_df: pd.DataFrame):
             return
         col_ph1, col_ph2, col_ph3 = st.columns(3)
         with col_ph1:
-            x_var = st.selectbox("X variable", numeric_cols, index=0, key="phase_x")
+            x_var = st.selectbox(tr("x_variable"), numeric_cols, index=0, key="phase_x")
         with col_ph2:
-            y_var = st.selectbox("Y variable", numeric_cols, index=min(1,len(numeric_cols)-1), key="phase_y")
+            y_var = st.selectbox(tr("y_variable"), numeric_cols, index=min(1,len(numeric_cols)-1), key="phase_y")
         with col_ph3:
-            color_mode = st.selectbox("Color by", ["month","doy"], index=0, key="phase_color")
+            color_mode = st.selectbox(tr("color_by"), ["month","doy"], index=0, key="phase_color")
         years_available = sorted(phase_df["date"].dt.year.unique())
-        sel_years = st.multiselect("Years", years_available, default=years_available[-min(3,len(years_available)):], key="phase_years")
-        smooth_days = st.slider("Smoothing (rolling days)", 1, 30, 5, 1, key="phase_smooth")
-        show_markers = st.checkbox("Show markers", value=False, key="phase_markers")
+        sel_years = st.multiselect(tr("years"), years_available, default=years_available[-min(3,len(years_available)):], key="phase_years")
+        smooth_days = st.slider(tr("smoothing_days"), 1, 30, 5, 1, key="phase_smooth")
+        show_markers = st.checkbox(tr("show_markers"), value=False, key="phase_markers")
         if x_var == y_var:
-            st.warning("Select different variables for X and Y.")
+            st.warning(tr("select_diff_vars"))
             return
         fig_phase = go.Figure()
         for yr in sel_years:
@@ -66,5 +79,5 @@ def render_phase_plots(era5_df: pd.DataFrame):
                     yr, x_var, "%{x:.2f}", y_var, "%{y:.2f}", "%{text}"),
                 text=[d.strftime("%Y-%m-%d") for d in x_series.index]
             ))
-        fig_phase.update_layout(template="plotly_white", title=f"Seasonal Loop: {x_var} vs {y_var}", xaxis_title=x_var, yaxis_title=y_var, legend_title="Year")
-    st.plotly_chart(fig_phase, use_container_width=True, config={"displaylogo": False})
+        fig_phase.update_layout(template="plotly_white", title=f"{x_var} vs {y_var}", xaxis_title=x_var, yaxis_title=y_var, legend_title="Year")
+        st.plotly_chart(fig_phase, use_container_width=True, config={"displaylogo": False})

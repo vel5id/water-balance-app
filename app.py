@@ -31,6 +31,7 @@ from wbm.ui.sections.trends import render_trends_and_correlations, render_long_t
 from wbm.analysis import rolling_trend, lagged_correlation  # needed by some sections still inline
 import plotly.express as px  # sections may rely on px
 import plotly.graph_objects as go  # for fallback / map sections
+from wbm.i18n import Translator, TRANSLATIONS, DEFAULT_LANG
 
 # Unified Plotly display helper (avoids deprecated width kwarg usage in st.plotly_chart)
 def show_plot(fig):
@@ -148,39 +149,98 @@ from wbm.ensemble import run_volume_ensemble, build_daily_ensemble
 
 
 DATA_ROOT = os.environ.get("DATA_ROOT", str(Path(__file__).resolve().parent))
-OUTPUT_DIR = os.path.join(DATA_ROOT, "water_balance_output")
-ERA5_DAILY_DB_PATH = os.path.join(DATA_ROOT, "processing_output", "era5_daily.sqlite")
-ERA5_DAILY_CSV_PATH = os.path.join(DATA_ROOT, "processing_output", "era5_daily_summary.csv")
-AREA_VOLUME_CURVE_PATH = os.path.join(DATA_ROOT, "processing_output", "area_volume_curve.csv")
-DEM_INTEGRATED_PATH = os.path.join(DATA_ROOT, "processing_output", "integrated_bathymetry_copernicus.tif")
-DEM_FALLBACK_PATH = os.path.join(DATA_ROOT, "processing_output", "bathymetry_reprojected_epsg4326.tif")
+# New structured layout (2025-10): artifacts moved under processed_data/
+PROC_ROOT = os.path.join(DATA_ROOT, "processed_data", "processing_output")
+OUTPUT_DIR = os.path.join(DATA_ROOT, "processed_data", "water_balance_output")
+ERA5_DAILY_DB_PATH = os.path.join(PROC_ROOT, "era5_daily.sqlite")
+ERA5_DAILY_CSV_PATH = os.path.join(PROC_ROOT, "era5_daily_summary.csv")
+AREA_VOLUME_CURVE_PATH = os.path.join(PROC_ROOT, "area_volume_curve.csv")
+DEM_INTEGRATED_PATH = os.path.join(PROC_ROOT, "integrated_bathymetry_copernicus.tif")
+DEM_FALLBACK_PATH = os.path.join(PROC_ROOT, "bathymetry_reprojected_epsg4326.tif")
 DEM_PATH = DEM_INTEGRATED_PATH if os.path.exists(DEM_INTEGRATED_PATH) else DEM_FALLBACK_PATH
-NDWI_MASK_PATH = os.path.join(DATA_ROOT, "processing_output", "ndwi_mask_0275.tif")
+NDWI_MASK_PATH = os.path.join(PROC_ROOT, "ndwi_mask_0275.tif")
 
 
 st.set_page_config(page_title="Water Balance Interactive", layout="wide")
-st.title("Water Balance Interactive Model (Modular)")
-st.caption("Scenario simulation and diagnostics")
 
-with st.spinner("Loading data..."):
+# --- Language handling with modern st.query_params (?lang=ru|en|kk) ---
+qp = st.query_params  # Streamlit >= 1.32 style
+initial_lang = qp.get("lang", DEFAULT_LANG)
+if initial_lang not in TRANSLATIONS:
+    initial_lang = DEFAULT_LANG
+
+lang_codes = ["ru", "en", "kk"]
+lang_display = [TRANSLATIONS[code][f"lang_{code}"] for code in lang_codes]
+display_to_code = dict(zip(lang_display, lang_codes))
+current_index = lang_codes.index(initial_lang)
+selected_display = st.sidebar.selectbox(TRANSLATIONS[initial_lang]["language_label"], lang_display, index=current_index)
+lang = display_to_code[selected_display]
+if qp.get("lang", initial_lang) != lang:
+    qp["lang"] = lang  # updates URL without reload
+tr = Translator(lang)
+st.session_state['lang'] = lang  # allow sections to reconstruct translator if not passed
+
+st.title(tr("app_title"))
+st.caption(tr("tagline"))
+
+with st.spinner(tr("loading_data")):
     ld: LoadedData = load_all(
         DATA_ROOT,
         AREA_VOLUME_CURVE_PATH,
         ERA5_DAILY_DB_PATH,
         ERA5_DAILY_CSV_PATH,
     )
-# --- Sanitize date dtype early (Arrow compatibility) ---
-for _df_name in ["curve_df","balance_df","era5_df","p_clim","et_clim"]:
+def _sanitize_dates_inplace(df: pd.DataFrame, col: str = "date"):
+    if df is None or df.empty or col not in df.columns:
+        return df
+    ser = pd.to_datetime(df[col], errors="coerce")
+    # Normalize to day precision to drop exotic ns offsets
+    ser = ser.dt.floor("D")
+    # Force pure datetime64[ns] (avoid object mix of Timestamp)
+    try:
+        df[col] = ser.astype("datetime64[ns]")
+    except Exception:
+        # Fallback: convert via numpy int64 days then back
+        vals = ser.view("int64") // (24*3600*1_000_000_000)
+        df[col] = pd.to_datetime(vals, unit="D")
+    return df
+
+def _sanitize_all_datetime_like(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    for c in list(out.columns):
+        if c.lower() == 'date' or 'date' in c.lower() or isinstance(out[c].dtype, pd.api.extensions.ExtensionDtype):
+            # Broad heuristic: try datetime conversion for date-like columns
+            try:
+                conv = pd.to_datetime(out[c], errors='coerce')
+                if conv.notna().any():
+                    conv = conv.dt.floor('D')
+                    out[c] = conv.astype('datetime64[ns]')
+            except Exception:
+                pass
+        elif out[c].dtype == object:
+            sample = out[c].dropna().head(5)
+            if not sample.empty and any(hasattr(v,'isoformat') for v in sample):
+                try:
+                    conv = pd.to_datetime(out[c], errors='coerce').dt.floor('D')
+                    out[c] = conv.astype('datetime64[ns]')
+                except Exception:
+                    pass
+    return out
+
+# Apply sanitation to loaded dataframes
+for _df_name in ["curve_df","balance_df","era5_df"]:
     try:
         _df = getattr(ld, _df_name, None)
-        if _df is not None and not _df.empty and "date" in _df.columns:
-            _df = _df.copy()
-            _df["date"] = pd.to_datetime(_df["date"], errors="coerce").dt.floor("D")
-            setattr(ld, _df_name, _df)
+        if _df is not None and not _df.empty:
+            _san = _sanitize_dates_inplace(_df.copy(), "date")
+            _san = _sanitize_all_datetime_like(_san)
+            setattr(ld, _df_name, _san)
     except Exception:
         pass
 if ld.curve_df.empty:
-    st.error("Area-volume curve missing. Run preprocessing pipeline.")
+    st.error(tr('curve_missing'))
     st.stop()
 area_to_vol = ld.area_to_vol
 vol_to_area = ld.vol_to_area
@@ -195,13 +255,13 @@ vols = curve_df.get("volume_mcm", pd.Series(dtype=float)).to_numpy() if not curv
 
 """Removed legacy helper implementations in favor of modular versions (select_initial_volume, driver builders, etc.)."""
 
-with st.expander("Baseline info", expanded=False):
+with st.expander(tr("baseline_info"), expanded=False):
     if not balance_df.empty:
         st.write(balance_df.describe(include="all"))
     else:
-        st.info("Baseline balance not found – scenario still runnable.")
+        st.info(tr("no_baseline"))
 
-controls: Controls = build_controls(pd.Timestamp.today().normalize(), vols, balance_df, area_to_vol)
+controls: Controls = build_controls(pd.Timestamp.today().normalize(), vols, balance_df, area_to_vol, lang=lang)
 
 # Filter baseline if requested
 removed_n = 0
@@ -210,38 +270,41 @@ if controls.filter_baseline and not balance_df.empty and "area_km2" in balance_d
     balance_df = balance_df[balance_df["area_km2"] >= controls.min_area_km2].reset_index(drop=True)
     removed_n = before_n - len(balance_df)
 if removed_n > 0:
-    st.sidebar.info(f"Baseline filtered: removed {removed_n} rows below {controls.min_area_km2:.1f} km²")
+    st.sidebar.info(tr('removed_rows_area', n=removed_n, min_area=controls.min_area_km2))
 
 if not balance_df.empty:
     init_volume, init_note = select_initial_volume(balance_df, controls.start_date, vols)
 else:
     init_volume, init_note = (float(vols[len(vols)//2]) if len(vols) else 0.0, "fallback curve midpoint")
-st.sidebar.markdown(f"Initial volume: **{init_volume:.1f} mcm**")
-st.sidebar.caption(f"Source: {init_note}")
+st.sidebar.markdown(f"{tr('initial_volume')}: **{init_volume:.1f} mcm**")
+st.sidebar.caption(f"{tr('source_label')}: {init_note}")
 try:
     if area_to_vol is not None:
         min_vol_threshold = float(area_to_vol(float(controls.min_area_km2)))
-        st.sidebar.caption(f"Min area ⇒ volume ≥ {min_vol_threshold:.1f} mcm")
+    st.sidebar.caption(tr('min_area_to_volume', vol=min_vol_threshold))
 except Exception:
     pass
 
-with st.expander("Season+Trend method (docs)", expanded=False):
-    st.markdown(_seasonal_doc.markdown_doc())
+with st.expander(tr("season_trend_docs"), expanded=False):
+    st.markdown(_seasonal_doc.markdown_doc(lang))
 
 # --- Run simulation ---
 if p_clim.empty or et_clim.empty:
-    st.warning("Climatology missing (ERA5 precip/evap). Ensure preprocessing ran.")
+    st.warning(tr('clim_missing'))
 else:
     p_daily, et_daily = prepare_drivers(ld, controls)
     scenario_ctx = run_scenario(ld, controls, p_daily, et_daily, init_volume)
     scenario_df = scenario_ctx.scenario_df
+    # Sanitize scenario dates early
+    if scenario_df is not None and not scenario_df.empty and "date" in scenario_df.columns:
+        scenario_df = _sanitize_all_datetime_like(_sanitize_dates_inplace(scenario_df.copy(), "date"))
 
     def _filter_year(df: pd.DataFrame) -> pd.DataFrame:
         if df is None or df.empty:
             return df
         if controls.view_mode == "Single year":
             years = sorted(df["date"].dt.year.unique())
-            year = st.sidebar.selectbox("Year", years, index=len(years)-1)
+            year = st.sidebar.selectbox(tr("year"), years, index=len(years)-1)
             return df[df["date"].dt.year == year].reset_index(drop=True)
         return df
 
@@ -263,28 +326,28 @@ else:
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        show_plot(timeseries_figure(plot_base_s, plot_scena_s))
+        show_plot(timeseries_figure(plot_base_s, plot_scena_s, tr))
     with col2:
         if plot_scena is not None and not plot_scena.empty:
-            st.metric("End Volume (mcm)", f"{plot_scena['volume_mcm'].iloc[-1]:.1f}")
-            st.metric("Min Volume (mcm)", f"{plot_scena['volume_mcm'].min():.1f}")
-            st.metric("Max Volume (mcm)", f"{plot_scena['volume_mcm'].max():.1f}")
+            st.metric(tr("end_volume"), f"{plot_scena['volume_mcm'].iloc[-1]:.1f}")
+            st.metric(tr("min_volume"), f"{plot_scena['volume_mcm'].min():.1f}")
+            st.metric(tr("max_volume"), f"{plot_scena['volume_mcm'].max():.1f}")
 
-    st.subheader("Daily P/ET volumes")
-    show_plot(stacked_fluxes_figure(plot_scena))
+    st.subheader(tr("daily_pet"))
+    show_plot(stacked_fluxes_figure(plot_scena, tr))
 
     scen_safe = ensure_datetime(scenario_df.copy(), "date")
     csv_bytes = scen_safe.to_csv(index=False).encode("utf-8")
-    st.download_button("Download scenario CSV", csv_bytes, file_name="scenario_water_balance.csv", mime="text/csv")
+    st.download_button(tr("download_csv"), csv_bytes, file_name="scenario_water_balance.csv", mime="text/csv")
 
     # Analytical sections
-    render_trends_and_correlations(plot_base, plot_scena)
-    render_long_term_trends(era5_df)
-    if render_snow_temp: render_snow_temp(era5_df)
-    if render_runoff_temp: render_runoff_temp(era5_df)
-    if render_p_et_diag: render_p_et_diag(era5_df)
-    if render_phase_plots: render_phase_plots(era5_df)
-    if render_ensemble: render_ensemble(era5_df, vol_to_area, p_clim, et_clim, init_volume, controls.p_scale, controls.et_scale, controls.start_date, controls.end_date, plot_scena_s)
-    if render_map: render_map(scenario_df, vol_to_elev, DEM_PATH, NDWI_MASK_PATH, areas)
+    render_trends_and_correlations(plot_base, plot_scena, tr)
+    render_long_term_trends(era5_df, tr)
+    if render_snow_temp: render_snow_temp(era5_df, tr=tr)
+    if render_runoff_temp: render_runoff_temp(era5_df, tr=tr)
+    if render_p_et_diag: render_p_et_diag(era5_df, tr=tr)
+    if render_phase_plots: render_phase_plots(era5_df, tr=tr)
+    if render_ensemble: render_ensemble(era5_df, vol_to_area, p_clim, et_clim, init_volume, controls.p_scale, controls.et_scale, controls.start_date, controls.end_date, plot_scena_s, tr=tr)
+    if render_map: render_map(scenario_df, vol_to_elev, DEM_PATH, NDWI_MASK_PATH, areas, tr=tr)
 
-st.caption("Modular UI – legacy version kept in legacy_app_full.py for reference")
+st.caption(tr("footer_caption"))

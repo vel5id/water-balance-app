@@ -3,26 +3,40 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
+from typing import Callable, Optional
+try:
+    from wbm.i18n import Translator, DEFAULT_LANG
+except Exception:
+    class Translator:  # type: ignore
+        def __init__(self, lang: str='ru'): self.lang=lang
+        def __call__(self, key: str, **fmt): return key if not fmt else key
+    DEFAULT_LANG='ru'
 from wbm.ensemble import run_volume_ensemble, build_daily_ensemble
 from wbm.forecast import build_robust_season_trend_series
 from wbm.seasonal import compute_acf, recommend_block_length, theil_sen_trend_ci_boot
 
 __all__ = ["render_ensemble"]
 
-def render_ensemble(era5_df: pd.DataFrame, vol_to_area, p_clim, et_clim, init_volume: float, p_scale: float, et_scale: float, start_date: pd.Timestamp, end_date: pd.Timestamp, plot_scena_s: pd.DataFrame):
-    with st.expander("Ensemble forecast (experimental)", expanded=False):
-        use_ens = st.checkbox("Enable ensemble", value=False, key="ens_enable", help="Run N stochastic members")
+def render_ensemble(era5_df: pd.DataFrame, vol_to_area, p_clim, et_clim, init_volume: float, p_scale: float, et_scale: float, start_date: pd.Timestamp, end_date: pd.Timestamp, plot_scena_s: pd.DataFrame, tr: Optional[Callable[[str], str]] = None):
+    if tr is None:
+        lang = getattr(st.session_state, 'lang', DEFAULT_LANG)
+        try:
+            tr = Translator(lang)
+        except Exception:
+            tr = lambda k, **_: k  # type: ignore
+    with st.expander(tr("ensemble_forecast"), expanded=False):
+        use_ens = st.checkbox(tr("enable_ensemble"), value=False, key="ens_enable", help="Run N stochastic members")
         if not use_ens:
             return
-        N = st.slider("Members (N)", 20, 300, 100, 10, key="ens_N")
-        hist_days = st.number_input("History window (days)", 0, 3650, 5*365, 30, key="ens_hist")
-        seas_basis = st.selectbox("Season basis", ["DOY","MONTH"], index=0, key="ens_basis")
-        seas_smooth = st.slider("Seasonal smooth window (days)", 0, 31, 7, 1, key="ens_smooth")
-        center_mode = st.selectbox("Centering", ["median","mean"], index=0, key="ens_center")
-        use_boot = st.checkbox("Residual block bootstrap", value=True, key="ens_boot")
-        block_mode = st.selectbox("Block length mode", ["Auto","Manual"], index=0, key="ens_block_mode")
-        block_len_manual = st.slider("Block length (days)", 1, 14, 5, 1, disabled=block_mode=="Auto", key="ens_block_len")
-        q_low, q_high = st.select_slider("Quantile range", options=[0.05,0.1,0.25,0.5,0.75,0.9,0.95], value=(0.05,0.95), key="ens_qrange")
+        N = st.slider(tr("members_n"), 20, 300, 100, 10, key="ens_N")
+        hist_days = st.number_input(tr("history_window_days"), 0, 3650, 5*365, 30, key="ens_hist")
+        seas_basis = st.selectbox(tr("season_basis_opt"), ["DOY","MONTH"], index=0, key="ens_basis")
+        seas_smooth = st.slider(tr("seasonal_smooth_window"), 0, 31, 7, 1, key="ens_smooth")
+        center_mode = st.selectbox(tr("centering"), [tr("median"), tr("mean")], index=0, key="ens_center")
+        use_boot = st.checkbox(tr("residual_bootstrap"), value=True, key="ens_boot")
+        block_mode = st.selectbox(tr("block_length_mode"), ["Auto","Manual"], index=0, key="ens_block_mode")
+        block_len_manual = st.slider(tr("block_length"), 1, 14, 5, 1, disabled=block_mode=="Auto", key="ens_block_len")
+        q_low, q_high = st.select_slider(tr("quantile_range"), options=[0.05,0.1,0.25,0.5,0.75,0.9,0.95], value=(0.05,0.95), key="ens_qrange")
         q_med = 0.5 if (0.5 >= q_low and 0.5 <= q_high) else round((q_low + q_high)/2.0,4)
         q_low, q_med, q_high = sorted({float(q_low), float(q_med), float(q_high)})
         future_days = int((pd.Timestamp(end_date) - pd.Timestamp(start_date)).days)
@@ -126,7 +140,7 @@ def render_ensemble(era5_df: pd.DataFrame, vol_to_area, p_clim, et_clim, init_vo
         fan.add_trace(go.Scatter(x=ens["date"], y=ens[f"vol_q{int(q_high*100)}"], name=f"Q{int(q_high*100)}", line=dict(color="rgba(31,119,180,0.0)")))
         fan.add_trace(go.Scatter(x=ens["date"], y=ens[f"vol_q{int(q_low*100)}"], name=f"Q{int(q_low*100)}", fill="tonexty", fillcolor="rgba(31,119,180,0.2)", line=dict(color="rgba(31,119,180,0.0)")))
         fan.add_trace(go.Scatter(x=ens["date"], y=ens[f"vol_q{int(q_med*100)}"], name=f"Q{int(q_med*100)} (median)", line=dict(color="#1f77b4", width=2)))
-        fan.update_layout(title="Ensemble Volume Forecast", template="plotly_white", xaxis_title="Date", yaxis_title="Volume (million m³)")
+        fan.update_layout(title=tr("ensemble_forecast"), template="plotly_white", xaxis_title="Date", yaxis_title="Volume (million m³)")
         st.plotly_chart(fan, use_container_width=True, config={"displaylogo": False})
         with st.expander("Ensemble diagnostics", expanded=False):
             acf_df = compute_acf(residual_hist.to_numpy(), max_lag=min(30, max(5,residual_hist.size//4))) if residual_hist.size else None

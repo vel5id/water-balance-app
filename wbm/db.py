@@ -62,7 +62,8 @@ def _load_core_tables(
     output_dir = data_root / "water_balance_output"
     gleam_path = data_root / "GLEAM" / "processed" / "gleam_summary_all_years.csv"
     imerg_path = data_root / "precipitation_timeseries.csv"
-    area_volume_path = data_root / "processing_output" / "area_volume_curve.csv"
+    # Updated processed data path
+    area_volume_path = data_root / "processed_data" / "processing_output" / "area_volume_curve.csv"
 
     era5_tp_path = _resolve_era5_path("precipitation", data_root)
     era5_e_path = _resolve_era5_path("evaporation", data_root)
@@ -189,7 +190,7 @@ def _discover_extra_csvs(data_root: Path, skip_tables: Iterable[str]) -> dict[st
     extra: dict[str, tuple[pd.DataFrame, TableAsset]] = {}
     search_targets = [
         ("out_", data_root / "water_balance_output"),
-        ("proc_", data_root / "processing_output"),
+    ("proc_", data_root / "processed_data" / "processing_output"),
     ]
 
     for prefix, directory in search_targets:

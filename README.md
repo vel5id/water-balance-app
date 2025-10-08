@@ -46,22 +46,22 @@ wbm/
 			ensemble.py
 			map_view.py
 		state.py              # (Extensible) shared UI state dataclasses
-processing_output/        # Generated artifacts (area-volume curve, rasters)
-water_balance_output/     # Baseline & scenario outputs
+processed_data/processing_output/        # Generated artifacts (area-volume curve, rasters)
+processed_data/water_balance_output/     # Baseline & scenario outputs
 URGENT_BACKTEST_2024.md   # Backtest instructions
 ```
 
 ### Data Requirements (`DATA_ROOT`)
 Environment variable `DATA_ROOT` points to a folder containing at minimum:
 ```
-processing_output/
+processed_data/processing_output/
 	area_volume_curve.csv
 	integrated_bathymetry_copernicus.tif   # preferred depth DEM
 	ndwi_mask_0275.tif                     # NDWI water mask (1=water)
 GLEAM/processed/
 	gleam_summary_all_years.csv            # includes evaporation_mm / E
 precipitation_timeseries.csv             # precipitation_mm (or mean_precip_mm_per_h*24)
-water_balance_output/
+processed_data/water_balance_output/
 	water_balance_final.csv                # optional baseline
 ```
 Fallback: if `integrated_bathymetry_copernicus.tif` missing, tries `bathymetry_reprojected_epsg4326.tif`.

@@ -255,34 +255,123 @@ def seasonal_spread(series: pd.Series, freq: SeasonFreq = "doy") -> pd.DataFrame
     out.reset_index(inplace=True)
     return out
 
-def markdown_doc() -> str:
-    return (
-        "## Season + Trend Modeling (Robust)\n"
-        "Модель: X_t = S_t + T_t + R_t, где S_t — сезонная медиана по ключу (DOY/MONTH), "
-        "T_t — Theil–Sen тренд, R_t — остаток. Остатки можно бутстрэпить для ансамблей.\n\n"
-        "Шаги:\n"
-        "1. Сортировка и нормализация дат\n"
-        "2. Группировка и медиана по ключу (устойчиво к выбросам)\n"
-        "3. Вычитание сезонности, оценка наклона Theil–Sen\n"
-        "4. Интерсепт = медиана детрендированного ряда\n"
-        "5. Построение будущего: сезонный шаблон + линейный тренд\n"
-        "6. Остатки = наблюдение - (сезон + тренд)\n\n"
-        "Преимущества: робастность к выбросам, интерпретируемость. Ограничения: не моделирует\n"
-        "нелинейные тренды, не учитывает автокорреляцию явно (кроме блок-бутстрэпа).\n"
-        "\n### Smoothing (сглаживание сезонности)\n"
-        "Опциональное rolling-median сглаживание уменьшает шум в шаблоне для DOY. Рекомендуемый диапазон окна: 3-11 дней.\n"
-        "Слишком большое окно может исказить пики и фазы переходов.\n"
-        "\n### Seasonal Spread (вариабельность)\n"
-        "Лента p25–p75 или p10–p90 отражает межгодовую изменчивость сезонного профиля. Требует >=3 лет данных.\n"
-        "\n### Caching\n"
-        "Тяжёлые вычисления (ACF, bootstrap CI) кэшируются по хэшу входной серии и параметров. Это ускоряет интерактив.\n"
-        "\n### Отложенные улучшения (Deferred)\n"
-        "1. Saturation/Truncation тренда при длинном горизонте.\n"
-        "2. Variance inflation diagnostics (spread ratio).\n"
-        "3. Box-Cox вместо лог-преобразования.\n"
-        "4. Adaptive block bootstrap (оптимизация по минимизации ошибки прогноза).\n"
-        "5. Мультипликативный режим (лог1p) для гетероскедастичных рядов.\n"
-    )
+_DOC_RU = """## Модель Season + Trend (робастная)
+
+Формула: $X_t = S_t + T_t + R_t$, где:
+- $S_t$ — сезонная компонента (медиана по дню года (DOY) или месяцу)
+- $T_t$ — тренд (наклон по робастной оценке Theil–Sen)
+- $R_t$ — остаток (погода, краткосрочная вариабельность)
+
+Остатки можно бутстрэпить (простой или блочный bootstrap) для построения ансамблей вокруг детерминированной траектории.
+
+### Алгоритм
+1. Сортировка и нормализация дат
+2. Построение сезонного шаблона: медиана значений, имеющих одинаковый ключ (DOY/MONTH)
+3. Интерполяция пропущенных ключей
+4. Вычитание шаблона → детрендированная серия
+5. Оценка наклона методом Theil–Sen (медиана попарных частных)
+6. Интерсепт = медиана детрендированной серии
+7. Прогноз: будущий сезонный шаблон + линейный тренд
+8. Остатки = наблюдение − (сезон + тренд)
+
+### Преимущества
+Робастность к выбросам, интерпретируемость, простота. Ограничения: не ловит нелинейные тренды, не моделирует явную автокорреляцию (кроме сохранения её частично блок-бутстрэптом).
+
+### Сглаживание сезонности
+Необязательное rolling-median окно (3–11 дней) уменьшает шум, но слишком большое окно сглаживает пики.
+
+### Seasonal Spread
+Диапазоны p25–p75 / p10–p90 показывают межгодовую изменчивость, требуется ≥3 года данных.
+
+### Кэширование
+Тяжёлые расчёты (ACF, bootstrap CI) могут кэшироваться по хэшу входных параметров (опционально в приложении).
+
+### Дальнейшие улучшения
+1. Ограничение / насыщение тренда на длинном горизонте
+2. Диагностика расширения дисперсии
+3. Box-Cox трансформация
+4. Адаптивный выбор длины блока бутстрэпа
+5. Мультипликативный режим через логарифмирование
+"""
+
+_DOC_EN = """## Season + Trend Modeling (Robust)
+
+We decompose a hydrometeorological daily (or monthly) series as $X_t = S_t + T_t + R_t$:
+- $S_t$: Seasonal template (median by day-of-year or month) for robustness.
+- $T_t$: Trend estimated via Theil–Sen (median of pairwise slopes), resilient to outliers.
+- $R_t$: Residual (weather-scale variability). Residuals may be (block) bootstrapped to form stochastic ensembles.
+
+### Steps
+1. Sort & normalize timestamps
+2. Build seasonal median template per key (DOY / MONTH)
+3. Interpolate missing seasonal keys
+4. Detrend seasonally: subtract template
+5. Compute Theil–Sen slope on detrended values
+6. Intercept = median of detrended series
+7. Future deterministic path: seasonal template for future dates + linear trend
+8. Residuals = observed − (season + trend)
+
+### Advantages
+Robust to outliers; transparent; minimal assumptions. Limitations: no explicit nonlinear trend capture; residual autocorrelation only partially preserved unless block bootstrap is used.
+
+### Seasonal Smoothing
+Optional centered rolling median (window ~3–11 days) can denoise daily templates; large windows risk flattening peaks.
+
+### Seasonal Spread
+Quantile bands (p25–p75, p10–p90) summarize interannual variability — need ≥3 distinct years.
+
+### Caching
+Expensive computations (ACF, bootstrap CIs) can be cached by hashing input series & parameters (implementation-dependent).
+
+### Future Enhancements
+1. Trend saturation / truncation on long horizons
+2. Variance inflation diagnostics
+3. Box-Cox transform for variance stabilization
+4. Adaptive block length selection
+5. Multiplicative (log1p) mode for heteroskedastic series
+"""
+
+_DOC_KK = """## Маусым + Тренд (робаст) моделі
+
+Уақыттық қатар $X_t$ келесіге жіктеледі: $X_t = S_t + T_t + R_t$:
+- $S_t$ – маусымдық үлгі (жыл күніне немесе айға қарай медиана)
+- $T_t$ – тренд (Theil–Sen, жұптық еңістіктер медианасы, төзімді)
+- $R_t$ – қалдық (қысқа мерзімді ауа райы өзгергіштігі). Қалдықтарды (блок) бутстрэпен ансамбль жасауға болады.
+
+### Қадамдар
+1. Күндерді сұрыптау және қалыпқа келтіру
+2. Маусымдық кілт бойынша медиана шаблонын құру (DOY / MONTH)
+3. Жоқ кілттерді интерполяциялау
+4. Маусымдықты алып тастау (декома): серия – шаблон
+5. Theil–Sen арқылы еңістік (тренд) есептеу
+6. Интерсепт = детрендтелген қатар медианасы
+7. Болашақ: маусымдық шаблон + сызықтық тренд
+8. Қалдықтар = бақылау − (маусым + тренд)
+
+### Артықшылықтары
+Шулы / экстремалды мәндерге төзімді, түсінікті. Шектеулері: бейсызық трендтерді ұстамайды, автокорреляцияны тікелей модельдемейді (тек блок бутстрэпен ішінара).
+
+### Маусымдықты тегістеу
+Орталықталған медианалық жылжымалы терезе (3–11 күн) шуды азайтады, бірақ тым үлкен терезе шыңдарды жояды.
+
+### Маусымдық таралу (Seasonal Spread)
+Квантильдік диапазондар (p25–p75, p10–p90) жылдар аралық өзгергіштікті көрсетеді (≥3 жыл қажет).
+
+### Кэштеу
+Есептеу ауыр қадамдарды (ACF, бутстрэп CI) хэш бойынша кэштеуге болады.
+
+### Болашақ жақсартулар
+1. Ұзақ горизонта трендті шектеу
+2. Дисперсия кеңею диагностикасы
+3. Box-Cox түрлендіруі
+4. Адаптивті блок ұзындығы
+5. Көбейткіш режим (log1p) гетероскедастика үшін
+"""
+
+_DOCS = {"ru": _DOC_RU, "en": _DOC_EN, "kk": _DOC_KK}
+
+def markdown_doc(lang: str = "ru") -> str:
+    return _DOCS.get(lang, _DOC_RU)
 
 __all__ = [
     "seasonal_keys",

@@ -4,16 +4,32 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import rasterio
+from typing import Callable, Optional
+try:
+    from wbm.i18n import Translator, DEFAULT_LANG
+except Exception:  # minimal fallback
+    class Translator:  # type: ignore
+        def __init__(self, lang: str = 'ru'): self.lang = lang
+        def __call__(self, key: str, **fmt):
+            return key if not fmt else key
+    DEFAULT_LANG = 'ru'
 
 __all__ = ["render_map"]
 
-def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_PATH: str, areas, alpha_default: float = 0.5):
-    st.subheader("Reservoir map: simulated water extent")
+def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_PATH: str, areas, alpha_default: float = 0.5, tr: Optional[Callable[[str], str]] = None):
+    if tr is None:
+        # reconstruct translator from session if possible
+        lang = getattr(st.session_state, 'lang', DEFAULT_LANG)
+        try:
+            tr = Translator(lang)
+        except Exception:
+            tr = lambda k, **_: k  # type: ignore
+    st.subheader(tr("map_title"))
     if not os.path.exists(DEM_PATH):
-        st.info("Bathymetry DEM not found; map overlay disabled.")
+        st.info(tr("bathymetry_missing"))
         return
     if vol_to_elev is None:
-        st.info("Volume→Elevation mapping unavailable; ensure curve has elevation_m column.")
+        st.info(tr("vol_elev_missing"))
         return
     if "_dem_cache" not in st.session_state:
         with rasterio.open(DEM_PATH) as ds:
@@ -22,12 +38,12 @@ def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_
     dem = st.session_state._dem_cache["dem"]; nodata = st.session_state._dem_cache["nodata"]
     vis_col1, vis_col2 = st.columns([2,1])
     with vis_col2:
-        alpha = st.slider("Water overlay opacity", 0.1, 0.9, alpha_default, 0.05, key="map_alpha")
-        idx = st.slider("Visualization day", 0, len(scenario_df)-1, value=len(scenario_df)-1, key="map_day")
-        dem_view = st.selectbox("Base background", ["Hillshade","Grayscale (low-dark)","Grayscale (low-bright)","Terrain colors","Bathymetric","Flat","None"], index=0, key="map_view")
-        mask_mode = st.selectbox("Water mask mode", ["Simulated level","Depth & NDWI"], index=0, key="map_mask")
-        if mask_mode == "Simulated level":
-            st.caption("Default dynamic simulated level mode.")
+        alpha = st.slider(tr("water_overlay_opacity"), 0.1, 0.9, alpha_default, 0.05, key="map_alpha")
+        idx = st.slider(tr("visualization_day"), 0, len(scenario_df)-1, value=len(scenario_df)-1, key="map_day")
+        dem_view = st.selectbox(tr("base_background"), ["Hillshade","Grayscale (low-dark)","Grayscale (low-bright)","Terrain colors","Bathymetric","Flat","None"], index=0, key="map_view")
+        mask_mode = st.selectbox(tr("water_mask_mode"), [tr("simulated_level"),tr("depth_ndwi")], index=0, key="map_mask")
+        if mask_mode == tr("simulated_level"):
+            st.caption(tr("default_sim_level_mode"))
     v_sel = float(scenario_df["volume_mcm"].iloc[idx]) if not scenario_df.empty else float("nan")
     try:
         z_level = float(vol_to_elev(v_sel)) if vol_to_elev is not None else None
@@ -82,7 +98,8 @@ def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_
         base_rgb = (vis[...,None]*255).astype(np.uint8); base_rgb = np.repeat(base_rgb,3,axis=2)
     else:
         base_rgb = (np.clip(color_vis,0,1)*255).astype(np.uint8)
-    if mask_mode == "Depth & NDWI":
+    # Determine water mask mode
+    if mask_mode == tr("depth_ndwi"):
         if "_ndwi_cache" not in st.session_state:
             if os.path.exists(NDWI_MASK_PATH):
                 with rasterio.open(NDWI_MASK_PATH) as ms: ndwi = ms.read(1)
@@ -91,7 +108,7 @@ def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_
                 st.session_state._ndwi_cache = None
         ndwi_mask = st.session_state._ndwi_cache
         if ndwi_mask is None or ndwi_mask.shape != dem_disp.shape:
-            st.warning("NDWI mask missing or shape mismatch; showing depth-only water (dem<0).")
+            st.warning(tr("ndwi_mask_missing"))
             water_mask = (dem_disp < 0)
             if nodata is not None: water_mask = water_mask & ~np.isnan(dem_disp)
         else:
@@ -101,8 +118,12 @@ def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_
         dem_min = float(np.nanmin(dem_disp)); dem_max = float(np.nanmax(dem_disp))
         is_elevation = (dem_min >= 0) or (dem_max > 5)
         if z_level is not None and is_elevation:
-            water_mask = (dem_disp <= z_level); water_mask = water_mask & ~np.isnan(dem_disp) if nodata is not None else water_mask
+            # Direct simulated level fill (elevation DEM)
+            water_mask = (dem_disp <= z_level)
+            if nodata is not None:
+                water_mask = water_mask & ~np.isnan(dem_disp)
         else:
+            # Dynamic depth fraction mode for bathymetric (negative) DEM
             try:
                 target_area_km2 = float(scenario_df["area_km2"].iloc[idx])
                 max_area_curve = float(areas.max()) if hasattr(areas,'max') else target_area_km2
@@ -117,27 +138,34 @@ def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_
                 st.session_state._depth_shape = dem_disp.shape
             depth_values = st.session_state._depth_values; depth_mask_template = st.session_state._depth_mask_template
             if depth_values.size == 0:
-                water_mask = (dem_disp < 0); water_mask = water_mask & ~np.isnan(dem_disp) if nodata is not None else water_mask
+                water_mask = (dem_disp < 0)
+                if nodata is not None:
+                    water_mask = water_mask & ~np.isnan(dem_disp)
             else:
                 f = float(np.clip(frac,0,1))
-                if f <= 0: water_mask = np.zeros_like(dem_disp,dtype=bool)
-                elif f >= 0.9999: water_mask = depth_mask_template
+                if f <= 0:
+                    water_mask = np.zeros_like(dem_disp,dtype=bool)
+                elif f >= 0.9999:
+                    water_mask = depth_mask_template
                 else:
-                    try: thresh = float(np.quantile(depth_values, f))
-                    except Exception: thresh = float(depth_values.max())
+                    try:
+                        thresh = float(np.quantile(depth_values, f))
+                    except Exception:
+                        thresh = float(depth_values.max())
                     water_mask = (dem_disp <= thresh) & depth_mask_template
-                if nodata is not None: water_mask = water_mask & ~np.isnan(dem_disp)
-            st.caption(f"Dynamic depth mode: area fraction={frac:.3f}")
+                if nodata is not None:
+                    water_mask = water_mask & ~np.isnan(dem_disp)
+            st.caption(tr("dynamic_depth_caption", frac=frac))
     water_color = np.array([30,144,255], dtype=np.uint8)
     over = base_rgb.copy(); over_float = over.astype(np.float32)
     over_float[water_mask] = (1 - alpha) * over_float[water_mask] + alpha * water_color
     over_img = over_float.astype(np.uint8)
     with vis_col1:
         dem_src_note = os.path.basename(DEM_PATH)
-        caption = f"{scenario_df['date'].iloc[idx].date()} | Volume {v_sel:.1f} mcm | DEM: {dem_src_note} | Mask: {mask_mode}"
-        if mask_mode == "Simulated level" and z_level is not None:
-            caption += f" | Level {z_level:.2f} m"
-        # width expects an int; using use_container_width for responsive layout
+        date_str = scenario_df['date'].iloc[idx].date()
+        caption = f"{date_str} | {tr('volume_word')} {v_sel:.1f} {tr('mcm_unit')} | {tr('dem_label')}: {dem_src_note} | {tr('mask_label')}: {mask_mode}"
+        if mask_mode == tr("simulated_level") and z_level is not None:
+            caption += f" | {tr('level_word')} {z_level:.2f} {tr('m_unit')}"
         st.image(over_img, caption=caption, use_container_width=True)
         dem_stats = dem_disp.copy(); dmin=float(np.nanmin(dem_stats)); dmax=float(np.nanmax(dem_stats)); dmean=float(np.nanmean(dem_stats))
-        st.caption(f"DEM stats — min: {dmin:.2f}, max: {dmax:.2f}, mean: {dmean:.2f}")
+    st.caption(tr("dem_stats", dmin=dmin, dmax=dmax, dmean=dmean))
