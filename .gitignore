@@ -64,6 +64,7 @@ minimal_model/
 processed_data/processing_output/*.tif
 processed_data/processing_output/*.png
 processed_data/water_balance_output/*.png
+processed_data/processing_output/*.aux.xml
 
 # Whitelist ERA5 daily CSV drivers if present (exclude everything else under wbm/storage)
 !wbm/storage/temperature/era5_land_temperature_daily.csv

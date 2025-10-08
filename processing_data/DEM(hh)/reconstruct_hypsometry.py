@@ -427,5 +427,5 @@ def main():
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
-    print("Example usage: python reconstruct_hypsometry.py --bathy Bathymetry/Main/bathymetry_hh.tif --dem 'Hillshade + DEM/output_hh.tif' --out processed_data/processing_output --amax 93.7 --vmax 791 --hmax 19.8")
+        print("Example usage: python reconstruct_hypsometry.py --bathy Bathymetry/Main/bathymetry_hh.tif --dem 'Hillshade + DEM/output_hh.tif' --out processed_data/processing_output --amax 93.7 --vmax 791 --hmax 19.8")
     main()
