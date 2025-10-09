@@ -60,11 +60,9 @@ minimal_model/
 !processed_data/water_balance_output/*.csv
 !processed_data/water_balance_output/water_balance_statistics.txt
 
-# Re-ignore heavy binary artifacts inside processed_data to avoid bloating the repo
-processed_data/processing_output/*.tif
-processed_data/processing_output/*.png
-processed_data/water_balance_output/*.png
-processed_data/processing_output/*.aux.xml
+# IMPORTANT (2025-10-09): Track ALL artifacts inside processed_data per request
+# This overrides any previous exclusions; .tif/.png/.aux.xml are now versioned.
+!processed_data/**
 
 # Whitelist ERA5 daily CSV drivers if present (exclude everything else under wbm/storage)
 !wbm/storage/temperature/era5_land_temperature_daily.csv
