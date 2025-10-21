@@ -1,0 +1,21 @@
+{
+  "source": "C:\\Users\\micro\\Downloads\\Модель\\water-balance-app\\processed_data\\water_balance_output\\sentinel_area_volume.csv",
+  "history_points": 1881,
+  "horizon_days": 365,
+  "method": "sarima",
+  "notes": {
+    "order": [
+      1,
+      0,
+      0
+    ],
+    "seasonal_order": [
+      0,
+      0,
+      0,
+      30
+    ],
+    "aic": 4336.664225934509,
+    "bic": 4350.443359536936
+  }
+}

@@ -154,7 +154,10 @@ PROC_ROOT = os.path.join(DATA_ROOT, "processed_data", "processing_output")
 OUTPUT_DIR = os.path.join(DATA_ROOT, "processed_data", "water_balance_output")
 ERA5_DAILY_DB_PATH = os.path.join(PROC_ROOT, "era5_daily.sqlite")
 ERA5_DAILY_CSV_PATH = os.path.join(PROC_ROOT, "era5_daily_summary.csv")
-AREA_VOLUME_CURVE_PATH = os.path.join(PROC_ROOT, "area_volume_curve.csv")
+# Prefer reconstructed curve if available; fallback to original
+AREA_VOLUME_CURVE_RECO_PATH = os.path.join(PROC_ROOT, "area_volume_curve_reconstructed.csv")
+AREA_VOLUME_CURVE_BASE_PATH = os.path.join(PROC_ROOT, "area_volume_curve.csv")
+AREA_VOLUME_CURVE_PATH = AREA_VOLUME_CURVE_RECO_PATH if os.path.exists(AREA_VOLUME_CURVE_RECO_PATH) else AREA_VOLUME_CURVE_BASE_PATH
 DEM_INTEGRATED_PATH = os.path.join(PROC_ROOT, "integrated_bathymetry_copernicus.tif")
 DEM_FALLBACK_PATH = os.path.join(PROC_ROOT, "bathymetry_reprojected_epsg4326.tif")
 DEM_PATH = DEM_INTEGRATED_PATH if os.path.exists(DEM_INTEGRATED_PATH) else DEM_FALLBACK_PATH
@@ -182,6 +185,25 @@ st.session_state['lang'] = lang  # allow sections to reconstruct translator if n
 
 st.title(tr("app_title"))
 st.caption(tr("tagline"))
+
+"""Curve source toggle (base vs reconstructed)"""
+exists_reco = os.path.exists(AREA_VOLUME_CURVE_RECO_PATH)
+exists_base = os.path.exists(AREA_VOLUME_CURVE_BASE_PATH)
+curve_choice = None
+if exists_reco and exists_base:
+    curve_choice = st.sidebar.radio(
+        "Источник кривой A–V",
+        options=["Reconstructed","Base"],
+        index=0,
+        help="Переключение файла кривой Площадь–Объём"
+    )
+    AREA_VOLUME_CURVE_PATH = AREA_VOLUME_CURVE_RECO_PATH if curve_choice == "Reconstructed" else AREA_VOLUME_CURVE_BASE_PATH
+elif exists_reco:
+    curve_choice = "Reconstructed"
+    AREA_VOLUME_CURVE_PATH = AREA_VOLUME_CURVE_RECO_PATH
+elif exists_base:
+    curve_choice = "Base"
+    AREA_VOLUME_CURVE_PATH = AREA_VOLUME_CURVE_BASE_PATH
 
 with st.spinner(tr("loading_data")):
     ld: LoadedData = load_all(
@@ -258,8 +280,56 @@ vols = curve_df.get("volume_mcm", pd.Series(dtype=float)).to_numpy() if not curv
 with st.expander(tr("baseline_info"), expanded=False):
     if not balance_df.empty:
         st.write(balance_df.describe(include="all"))
+    # Curve diagnostics
+    if not curve_df.empty:
+        curve_source = "reconstructed" if AREA_VOLUME_CURVE_PATH == AREA_VOLUME_CURVE_RECO_PATH else "base"
+        amax = float(curve_df.get("area_km2", pd.Series(dtype=float)).max()) if "area_km2" in curve_df.columns else float('nan')
+        vmax = float(curve_df.get("volume_mcm", pd.Series(dtype=float)).max()) if "volume_mcm" in curve_df.columns else float('nan')
+        st.info(f"A–V curve: {curve_source} ({os.path.basename(AREA_VOLUME_CURVE_PATH)}) | Amax≈{amax:.2f} km², Vmax≈{vmax:.1f} MCM")
     else:
         st.info(tr("no_baseline"))
+
+# --- Diagnostics block ---
+with st.expander("Diagnostics", expanded=False):
+    st.markdown("Активные артефакты и окружение:")
+    st.write({
+        "curve_file": AREA_VOLUME_CURVE_PATH,
+        "dem_file": DEM_PATH,
+    })
+    try:
+        import sys, numpy as _np
+        try:
+            import pmdarima as _pm
+            pmdv = _pm.__version__
+        except Exception:
+            pmdv = "not installed"
+        st.write({
+            "python": sys.version.split()[0],
+            "numpy": _np.__version__,
+            "pmdarima": pmdv,
+        })
+    except Exception:
+        pass
+    # DEM quick stats
+    try:
+        import rasterio
+        if "_dem_diag" not in st.session_state:
+            with rasterio.open(DEM_PATH) as ds:
+                arr = ds.read(1)
+                nd = ds.nodata
+            import numpy as _np
+            if nd is not None:
+                arr = _np.where(arr == nd, _np.nan, arr)
+            st.session_state._dem_diag = {
+                "shape": arr.shape,
+                "valid": int(_np.isfinite(arr).sum()),
+                "min": float(_np.nanmin(arr)),
+                "max": float(_np.nanmax(arr)),
+                "mean": float(_np.nanmean(arr)),
+            }
+        st.write({"dem_stats": st.session_state._dem_diag})
+    except Exception:
+        st.caption("DEM diagnostics unavailable")
 
 controls: Controls = build_controls(pd.Timestamp.today().normalize(), vols, balance_df, area_to_vol, lang=lang)
 

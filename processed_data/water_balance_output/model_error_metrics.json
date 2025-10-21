@@ -1,0 +1,13 @@
+{
+  "n": 1538,
+  "bias_mean_mcm": 0.060759231085693484,
+  "std_mcm": 4.081142263259428,
+  "rmse_mcm": 4.080267685933303,
+  "mae_mcm": 1.4137147133500512,
+  "medae_mcm": 0.2941009080067707,
+  "q90_abs_residual_mcm": 3.1470038224355785,
+  "RSE_sigma_mcm": 4.081142263259428,
+  "NRMSE_mean_volume_pct": 2.391169823620631,
+  "NRMSE_range_pct": 1.9326557825936292,
+  "source": "C:\\Users\\micro\\Downloads\\Модель\\water-balance-app\\processed_data\\water_balance_output\\water_balance_final.csv"
+}

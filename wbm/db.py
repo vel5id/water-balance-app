@@ -62,8 +62,10 @@ def _load_core_tables(
     output_dir = data_root / "water_balance_output"
     gleam_path = data_root / "GLEAM" / "processed" / "gleam_summary_all_years.csv"
     imerg_path = data_root / "precipitation_timeseries.csv"
-    # Updated processed data path
-    area_volume_path = data_root / "processed_data" / "processing_output" / "area_volume_curve.csv"
+    # Updated processed data path: prefer reconstructed curve if present
+    reco = data_root / "processed_data" / "processing_output" / "area_volume_curve_reconstructed.csv"
+    base = data_root / "processed_data" / "processing_output" / "area_volume_curve.csv"
+    area_volume_path = reco if reco.exists() else base
 
     era5_tp_path = _resolve_era5_path("precipitation", data_root)
     era5_e_path = _resolve_era5_path("evaporation", data_root)
@@ -182,6 +184,25 @@ def _load_core_tables(
             ),
         )
 
+    # Include Sentinel-derived area/volume if produced
+    sentinel_path = output_dir / "sentinel_area_volume.csv"
+    sentinel_df = _read_csv_safe(str(sentinel_path))
+    if not sentinel_df.empty:
+        # Parse date column if present
+        if "date" in sentinel_df.columns:
+            try:
+                sentinel_df["date"] = pd.to_datetime(sentinel_df["date"], errors="coerce")
+            except Exception:
+                pass
+        core["sentinel_area_volume"] = (
+            sentinel_df,
+            TableAsset(
+                name="sentinel_area_volume",
+                source_path=sentinel_path,
+                description="Sentinel-2 NDWI-derived area and volume (by triplet dates)",
+            ),
+        )
+
     return core
 
 
@@ -190,7 +211,8 @@ def _discover_extra_csvs(data_root: Path, skip_tables: Iterable[str]) -> dict[st
     extra: dict[str, tuple[pd.DataFrame, TableAsset]] = {}
     search_targets = [
         ("out_", data_root / "water_balance_output"),
-    ("proc_", data_root / "processed_data" / "processing_output"),
+        ("out_", data_root / "processed_data" / "water_balance_output"),
+        ("proc_", data_root / "processed_data" / "processing_output"),
     ]
 
     for prefix, directory in search_targets:

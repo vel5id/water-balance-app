@@ -9,3 +9,6 @@ xarray
 netCDF4
 h5netcdf
 statsmodels
+pmdarima
+pystan==2.19.1.1
+prophet

@@ -32,6 +32,7 @@ class Controls:
     view_mode: str
     smooth_win: int
     forecast_mode: str
+    forecast_method: str  # NEW: "Theil-Sen", "SARIMA", or "Prophet"
     hist_window_days: int
     seas_basis: str
     start_date: pd.Timestamp

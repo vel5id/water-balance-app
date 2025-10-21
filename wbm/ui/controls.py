@@ -46,6 +46,23 @@ def build_controls(default_start: pd.Timestamp, vols, balance_df, area_to_vol, l
             help="0 = full history"
         )
         seas_basis = st.selectbox(tr("season_basis"), [tr("basis_doy"), tr("basis_month")], index=0)
+        
+        # NEW: Forecast method selection
+        st.markdown("---")
+        st.subheader("📊 Forecast Method")
+        forecast_method = st.radio(
+            "Choose algorithm:",
+            ["Theil-Sen (fast, robust)", "SARIMA (experimental)", "Prophet (advanced)", "SARIMAX (with features)"],
+            index=0,
+            help="Theil-Sen: robust to outliers. SARIMA: autoregressive. Prophet: handles holidays/changepoints. SARIMAX: ARIMA with exogenous regressors"
+        )
+        
+        if forecast_method == "SARIMA (experimental)":
+            st.warning("⚠️ SARIMA can be slow on large datasets and requires pmdarima")
+        elif forecast_method == "Prophet (advanced)":
+            st.info("ℹ️ Prophet requires pystan and facebook-prophet packages")
+        elif forecast_method == "SARIMAX (with features)":
+            st.info("ℹ️ SARIMAX uses external features (temperature, etc.) for improved accuracy")
 
     # Map localized labels back to internal codes
     if forecast_mode == tr("monthly_mean"):
@@ -58,6 +75,18 @@ def build_controls(default_start: pd.Timestamp, vols, balance_df, area_to_vol, l
         seas_basis_internal = "DOY"
     else:
         seas_basis_internal = "MONTH"
+    
+    # Map forecast method
+    if "Theil-Sen" in forecast_method:
+        forecast_method_internal = "Theil-Sen"
+    elif "SARIMA" in forecast_method:
+        forecast_method_internal = "SARIMA"
+    elif "Prophet" in forecast_method:
+        forecast_method_internal = "Prophet"
+    elif "SARIMAX" in forecast_method:
+        forecast_method_internal = "SARIMAX"
+    else:
+        forecast_method_internal = "Theil-Sen"
 
     return Controls(
         p_scale=float(p_scale),
@@ -70,6 +99,7 @@ def build_controls(default_start: pd.Timestamp, vols, balance_df, area_to_vol, l
         view_mode=view_mode if view_mode in ("All period","Single year") else ("All period" if view_mode.startswith(tr("all_period")) else "Single year"),
         smooth_win=int(smooth_win),
         forecast_mode=forecast_mode_internal,
+        forecast_method=forecast_method_internal,
         hist_window_days=int(hist_window_days),
         seas_basis=seas_basis_internal,
         start_date=pd.Timestamp(start_date),

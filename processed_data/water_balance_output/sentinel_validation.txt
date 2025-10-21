@@ -1,0 +1,38 @@
+SENTINEL AREA/VOLUME VALIDATION
+
+Triplets processed (after filters): 55
+
+Observed period: 2020-04-21 .. 2025-06-14
+
+Skipped dates summary:
+
+ - Small area < 40.0 km^2: 14
+
+
+Reference (Wikipedia or external):
+
+ - Area: 93.7 km^2
+
+ - Volume (total): 791.0 MCM
+
+ - Useful volume: 562.0 MCM
+
+ - Depth (mean or listed): 19.8 m
+
+
+Observed (from Sentinel-derived timeseries):
+
+ - Max area: 71.17 km^2 (Δ% vs ref area: -24.0%)
+
+ - Max volume: 304.0 MCM (Δ% vs ref vol: -61.6%)
+
+ - Implied mean depth at max (V/A): 4.27 m (compare to listed 19.8 m)
+
+
+Notes:
+
+ - Area/volume here reflect available clear-sky Sentinel dates and NDWI thresholding; 
+
+   they may not coincide with the exact hydrometric maximum.
+
+ - Implied mean depth = V/A is a rough check; listed depth may refer to mean/max at full supply.

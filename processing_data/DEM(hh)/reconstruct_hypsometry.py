@@ -213,6 +213,7 @@ def main():
     ap.add_argument('--buffer_step', type=float, default=50.0, help='Buffer step in meters when auto_buffer enabled')
     ap.add_argument('--buffer_tolerance', type=float, default=0.005, help='Relative tolerance for reaching target area (e.g. 0.005=0.5%)')
     ap.add_argument('--max_buffer_iterations', type=int, default=25, help='Safety cap for auto buffer iterations')
+    ap.add_argument('--save-dem-full', action='store_true', help='Save full integrated DEM without mask clipping')
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -407,6 +408,31 @@ def main():
 
     calibrated.to_csv(curve_out, index=False)
     print(f"Saved reconstructed curve: {curve_out}")
+
+    # Save full integrated DEM as TIFF (without any mask clipping)
+    dem_out = os.path.join(args.out, 'integrated_dem_reconstructed.tif')
+    try:
+        # Replace NaN with a nodata value for proper TIFF storage
+        integrated_for_save = np.where(np.isnan(integrated), -9999, integrated).astype('float32')
+        with rasterio.open(
+            dem_out,
+            'w',
+            driver='GTiff',
+            height=integrated_for_save.shape[0],
+            width=integrated_for_save.shape[1],
+            count=1,
+            dtype=integrated_for_save.dtype,
+            crs=grid_profile['crs'],
+            transform=grid_profile['transform'],
+            nodata=-9999,
+        ) as dst:
+            dst.write(integrated_for_save, 1)
+        print(f"Saved full integrated DEM (no mask): {dem_out}")
+        print(f"  - CRS: {grid_profile['crs']}")
+        print(f"  - Shape: {integrated_for_save.shape}")
+        print(f"  - Elevation range: {np.nanmin(integrated):.2f} - {np.nanmax(integrated):.2f} m")
+    except Exception as e:
+        print(f"[ERROR] Failed to save integrated DEM: {e}")
 
     # Comparison plot
     try:

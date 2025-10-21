@@ -40,11 +40,24 @@ def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_
     with vis_col2:
         alpha = st.slider(tr("water_overlay_opacity"), 0.1, 0.9, alpha_default, 0.05, key="map_alpha")
         idx = st.slider(tr("visualization_day"), 0, len(scenario_df)-1, value=len(scenario_df)-1, key="map_day")
-        dem_view = st.selectbox(tr("base_background"), ["Hillshade","Grayscale (low-dark)","Grayscale (low-bright)","Terrain colors","Bathymetric","Flat","None"], index=0, key="map_view")
+        # Choose default background: if integrated bathymetry (has negatives), prefer Bathymetric palette
+        dem_min_preview = None
+        try:
+            dem_min_preview = float(np.nanmin(np.where(st.session_state._dem_cache["dem"] == nodata, np.nan, st.session_state._dem_cache["dem"]))) if nodata is not None else float(np.nanmin(st.session_state._dem_cache["dem"]))
+        except Exception:
+            pass
+        map_choices = ["Hillshade","Grayscale (low-dark)","Grayscale (low-bright)","Terrain colors","Bathymetric","Flat","None"]
+        default_idx = (4 if (dem_min_preview is not None and dem_min_preview < 0) else 0)
+        dem_view = st.selectbox(tr("base_background"), map_choices, index=default_idx, key="map_view")
         mask_mode = st.selectbox(tr("water_mask_mode"), [tr("simulated_level"),tr("depth_ndwi")], index=0, key="map_mask")
+        # Option: do not clip simulated aquatory by NDWI/AOI mask
+        no_clip = st.checkbox("Не обрезать смоделированную акваторию NDWI/АОИ маской", value=True, key="map_no_clip")
         if mask_mode == tr("simulated_level"):
             st.caption(tr("default_sim_level_mode"))
     v_sel = float(scenario_df["volume_mcm"].iloc[idx]) if not scenario_df.empty else float("nan")
+    # Clamp negative volumes for visualization to avoid nonsensical negative water levels
+    if np.isfinite(v_sel) and v_sel < 0:
+        v_sel = 0.0
     try:
         z_level = float(vol_to_elev(v_sel)) if vol_to_elev is not None else None
     except Exception:
@@ -98,6 +111,19 @@ def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_
         base_rgb = (vis[...,None]*255).astype(np.uint8); base_rgb = np.repeat(base_rgb,3,axis=2)
     else:
         base_rgb = (np.clip(color_vis,0,1)*255).astype(np.uint8)
+    # Subtle hillshade shading overlay for better depth/relief perception (except pure Hillshade/None)
+    if dem_view in ("Terrain colors","Bathymetric","Flat"):
+        try:
+            z = np.nan_to_num(dem_disp, nan=float(np.nanmedian(dem_disp)))
+            gx, gy = np.gradient(z); slope = np.pi/2 - np.arctan(np.hypot(gx, gy)); aspect = np.arctan2(-gx, gy)
+            az = np.radians(315.0); alt = np.radians(45.0)
+            hs = np.sin(alt)*np.sin(slope) + np.cos(alt)*np.cos(slope)*np.cos(az - aspect)
+            hs = (hs - hs.min())/(hs.max()-hs.min()+1e-6)
+            shade = 0.75 + 0.25*hs  # keep subtle
+            shaded = (base_rgb.astype(np.float32) * shade[...,None]).clip(0,255).astype(np.uint8)
+            base_rgb = shaded
+        except Exception:
+            pass
     # Determine water mask mode
     if mask_mode == tr("depth_ndwi"):
         if "_ndwi_cache" not in st.session_state:
@@ -109,11 +135,56 @@ def render_map(scenario_df: pd.DataFrame, vol_to_elev, DEM_PATH: str, NDWI_MASK_
         ndwi_mask = st.session_state._ndwi_cache
         if ndwi_mask is None or ndwi_mask.shape != dem_disp.shape:
             st.warning(tr("ndwi_mask_missing"))
-            water_mask = (dem_disp < 0)
-            if nodata is not None: water_mask = water_mask & ~np.isnan(dem_disp)
+            # Fall back to simulated-only water (no clipping)
+            if z_level is not None and ((float(np.nanmin(dem_disp)) >= 0) or (float(np.nanmax(dem_disp)) > 5)):
+                water_mask = (dem_disp <= z_level)
+            else:
+                water_mask = (dem_disp < 0)
+            if nodata is not None:
+                water_mask = water_mask & ~np.isnan(dem_disp)
         else:
-            water_mask = (dem_disp < 0) & ndwi_mask
-            if nodata is not None: water_mask = water_mask & ~np.isnan(dem_disp)
+            if 'no_clip' in locals() and no_clip:
+                # Use simulated water without clipping by NDWI
+                dem_min = float(np.nanmin(dem_disp)); dem_max = float(np.nanmax(dem_disp))
+                is_elevation = (dem_min >= 0) or (dem_max > 5)
+                if z_level is not None and is_elevation:
+                    water_mask = (dem_disp <= z_level)
+                else:
+                    # Dynamic depth fraction mode (replicate logic below)
+                    try:
+                        target_area_km2 = float(scenario_df["area_km2"].iloc[idx])
+                        max_area_curve = float(areas.max()) if hasattr(areas,'max') else target_area_km2
+                        frac = 0.0 if max_area_curve <= 0 else float(np.clip(target_area_km2 / max_area_curve,0,1))
+                    except Exception:
+                        frac = 1.0
+                    if '_depth_values' not in st.session_state or '_depth_shape' not in st.session_state or st.session_state['_depth_shape'] != dem_disp.shape:
+                        depth_mask_template = (dem_disp < 0) & ~np.isnan(dem_disp)
+                        depth_values = dem_disp[depth_mask_template]
+                        st.session_state._depth_values = depth_values
+                        st.session_state._depth_mask_template = depth_mask_template
+                        st.session_state._depth_shape = dem_disp.shape
+                    depth_values = st.session_state._depth_values; depth_mask_template = st.session_state._depth_mask_template
+                    if depth_values.size == 0:
+                        water_mask = (dem_disp < 0)
+                    else:
+                        f = float(np.clip(frac,0,1))
+                        if f <= 0:
+                            water_mask = np.zeros_like(dem_disp,dtype=bool)
+                        elif f >= 0.9999:
+                            water_mask = depth_mask_template
+                        else:
+                            try:
+                                thresh = float(np.quantile(depth_values, f))
+                            except Exception:
+                                thresh = float(depth_values.max())
+                            water_mask = (dem_disp <= thresh) & depth_mask_template
+                if nodata is not None:
+                    water_mask = water_mask & ~np.isnan(dem_disp)
+            else:
+                # Original behavior: clip by NDWI
+                water_mask = (dem_disp < 0) & ndwi_mask
+                if nodata is not None:
+                    water_mask = water_mask & ~np.isnan(dem_disp)
     else:
         dem_min = float(np.nanmin(dem_disp)); dem_max = float(np.nanmax(dem_disp))
         is_elevation = (dem_min >= 0) or (dem_max > 5)

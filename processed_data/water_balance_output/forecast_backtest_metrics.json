@@ -1,0 +1,46 @@
+{
+  "1": {
+    "n": 0,
+    "mse": NaN,
+    "rmse": NaN,
+    "mae": NaN,
+    "bias": NaN,
+    "mape_pct": NaN,
+    "r2": NaN,
+    "nse": NaN,
+    "kge": NaN
+  },
+  "7": {
+    "n": 0,
+    "mse": NaN,
+    "rmse": NaN,
+    "mae": NaN,
+    "bias": NaN,
+    "mape_pct": NaN,
+    "r2": NaN,
+    "nse": NaN,
+    "kge": NaN
+  },
+  "30": {
+    "n": 0,
+    "mse": NaN,
+    "rmse": NaN,
+    "mae": NaN,
+    "bias": NaN,
+    "mape_pct": NaN,
+    "r2": NaN,
+    "nse": NaN,
+    "kge": NaN
+  },
+  "90": {
+    "n": 0,
+    "mse": NaN,
+    "rmse": NaN,
+    "mae": NaN,
+    "bias": NaN,
+    "mape_pct": NaN,
+    "r2": NaN,
+    "nse": NaN,
+    "kge": NaN
+  }
+}
