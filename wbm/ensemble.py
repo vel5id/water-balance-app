@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, Literal
 
 from .simulate import simulate_forward
 from .seasonal import compute_acf, recommend_block_length
@@ -24,6 +24,7 @@ def build_daily_ensemble(
     block_size: Optional[int] = None,
     random_state: int | None = None,
     clamp_min: Optional[float] = 0.0,
+    transformation: Literal["none", "log1p"] = "none",
 ) -> list[pd.Series]:
     """Bootstrap residuals (moving contiguous blocks) and add to deterministic path.
 
@@ -37,6 +38,13 @@ def build_daily_ensemble(
         random_state: Seed for reproducibility.
         clamp_min: If set, enforces physical validity (e.g. Precip >= 0).
                    Prevents 'Anti-Rain' (negative precipitation).
+        transformation: Data transformation used during modeling.
+                        If "log1p", `deterministic_future` is expected to be in LINEAR space (output of forecast),
+                        while `residuals` are in LOG space (from modeling).
+                        We must:
+                        1. Transform `deterministic_future` -> Log Space.
+                        2. Add bootstrapped `residuals` (Log Space).
+                        3. Transform back -> Linear Space.
     """
     rng = np.random.default_rng(random_state)
     res = residuals.dropna()
@@ -72,8 +80,25 @@ def build_daily_ensemble(
 
     # Generate members
     members = []
+
+    # Pre-transform deterministic baseline if needed
+    if transformation == "log1p":
+        # deterministic_future is already back-transformed (expm1) in forecast.py
+        # We need it in LOG space to add LOG residuals.
+        base_log = np.log1p(deterministic_future)
+    else:
+        base_log = deterministic_future
+
     for b in blocks:
-        member = deterministic_future + b
+        # b contains bootstrapped residuals (which are in log-space if transformation="log1p")
+        if transformation == "log1p":
+            # Add in Log Space
+            member_log = base_log + b
+            # Back to Linear
+            member = np.expm1(member_log)
+        else:
+            member = base_log + b
+
         if clamp_min is not None:
             member = member.clip(lower=clamp_min)
         members.append(member)

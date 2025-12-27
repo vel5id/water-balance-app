@@ -40,3 +40,7 @@
 ## 2025-12-08 - [The Ghost Storm]
 **Discovery:** The `ffill` method was applied indiscriminately to all inputs in simulation. A missing data gap during a precipitation event would propagate that rain rate forward indefinitely ("Ghost Storm").
 **Protocol:** Hard-coded `fillna(0.0)` for Flux variables (Precipitation, Runoff) within `simulate_forward_era5`, overriding the generic fill method. Only state variables (Temp/Evap) use persistence filling.
+
+## 2025-12-08 - [Log-Space Forecasting]
+**Discovery:** Additive Gaussian residuals are physically invalid for heteroskedastic, non-negative variables like Precipitation (variance scales with mean).
+**Protocol:** Implemented `log1p` transformation in `build_robust_season_trend_series` and `build_daily_ensemble` to model multiplicative noise. Retained `clamp_min` as a final guard.

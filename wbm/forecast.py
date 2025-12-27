@@ -14,6 +14,7 @@ class SeasonTrendResult:
 	season_component: pd.Series
 	trend_component: pd.Series
 	residuals: pd.Series
+	transformation: Literal["none", "log1p"] = "none"
 
 
 def build_robust_season_trend_series(
@@ -24,12 +25,15 @@ def build_robust_season_trend_series(
 	min_history: int = 90,
 	clamp_min: Optional[float] = 0.0,
     seasonal_agg: Literal["median", "mean"] = "median",
+    transformation: Literal["none", "log1p"] = "none",
 ) -> SeasonTrendResult:
 	r"""Decompose daily series into robust seasonal + Theil–Sen trend and extend deterministically.
 
 	Model assumes an additive decomposition: $Y_t = T_t + S_t + \epsilon_t$,
 	where $T_t$ is the linear trend estimated via Theil-Sen (median slope) and
 	$S_t$ is the robust seasonal component (median of indices).
+
+    If transformation="log1p", modeling is done in log-space: $\log(1+Y_t) = T_t + S_t + \epsilon_t$.
 
 	Parameters
 	----------
@@ -50,10 +54,19 @@ def build_robust_season_trend_series(
 		- 'median': Robust to outliers (default).
 		- 'mean': Conserves mass. Preferred for zero-inflated variables like
 		  Precipitation in arid regions where median might be 0.
+    transformation : {'none', 'log1p'}, default='none'
+        Data transformation for variance stabilization.
+        - 'log1p': log(1+x). Useful for heteroskedastic data (Precipitation).
 	"""
-	s = series.dropna().sort_index()
-	if len(s) < min_history:
+	s_orig = series.dropna().sort_index()
+	if len(s_orig) < min_history:
 		raise ValueError("Insufficient history for season+trend model")
+
+    # AXIOM: Pre-Transform
+	if transformation == "log1p":
+		s = np.log1p(s_orig)
+	else:
+		s = s_orig
 
 	idx = s.index
 	if freq == "doy":
@@ -113,7 +126,15 @@ def build_robust_season_trend_series(
 	future_season = pd.Series([get_seasonal_val(k) for k in future_key], index=future_index)
 	x_future = (future_index - idx[0]).days.to_numpy()
 	future_trend = pd.Series(intercept + slope * x_future, index=future_index)
-	deterministic_future = future_season + future_trend
+
+    # Forecast in model space
+	model_future = future_season + future_trend
+
+    # AXIOM: Post-Transform Deterministic Future
+	if transformation == "log1p":
+		deterministic_future = np.expm1(model_future)
+	else:
+		deterministic_future = model_future
 
 	# Phase 1: The "Physics Guard"
 	if clamp_min is not None:
@@ -125,6 +146,7 @@ def build_robust_season_trend_series(
 		season_component=season_component,
 		trend_component=trend_component,
 		residuals=residuals,
+        transformation=transformation,
 	)
 
 
