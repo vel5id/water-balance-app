@@ -3,14 +3,32 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
+try:
+	from scipy import stats
+	HAS_SCIPY = True
+except ImportError:
+	HAS_SCIPY = False
 
 
 def _theil_sen_slope(y: np.ndarray, x: np.ndarray) -> float:
-	"""Return Theil–Sen median slope for y vs x."""
+	"""Return Theil–Sen median slope for y vs x.
+
+	Uses scipy.stats.theilslopes if available for standardized implementation.
+	Falls back to a custom implementation if scipy is missing.
+	"""
 	n = len(y)
 	if n < 2:
 		return 0.0
+
+	if HAS_SCIPY:
+		# scipy.stats.theilslopes returns (slope, intercept, low_slope, high_slope)
+		# We only need the slope (median slope).
+		# alpha=0.95 is default, impact is on confidence intervals which we ignore.
+		res = stats.theilslopes(y, x, alpha=0.95)
+		return float(res[0])
+
+	# Fallback O(N^2) implementation
 	slopes = []
 	for i in range(n - 1):
 		dy = y[i + 1 :] - y[i]
@@ -40,8 +58,13 @@ def build_robust_season_trend_series(
 	freq: Literal["doy", "month"] = "doy",
 	future_days: int = 180,
 	min_history: int = 90,
+	clamp_min: Optional[float] = 0.0,
 ) -> SeasonTrendResult:
-	"""Decompose daily series into robust seasonal + Theil–Sen trend and extend deterministically.
+	r"""Decompose daily series into robust seasonal + Theil–Sen trend and extend deterministically.
+
+	Model assumes an additive decomposition: $Y_t = T_t + S_t + \epsilon_t$,
+	where $T_t$ is the linear trend estimated via Theil-Sen (median slope) and
+	$S_t$ is the robust seasonal component (median of indices).
 
 	Parameters
 	----------
@@ -53,6 +76,10 @@ def build_robust_season_trend_series(
 		Forward deterministic extension length.
 	min_history : int
 		Minimum number of observations required.
+	clamp_min : Optional[float], default=0.0
+		Lower bound for forecasted values. Essential for physical variables (P, ET)
+		to prevent negative predictions ("anti-rain") from drying trends.
+		Set to None to disable clamping.
 	"""
 	s = series.dropna().sort_index()
 	if len(s) < min_history:
@@ -82,10 +109,36 @@ def build_robust_season_trend_series(
 		future_key = future_index.dayofyear
 	else:
 		future_key = future_index.month
-	future_season = pd.Series([seasonal_map.get(k, seasonal_map.median()) for k in future_key], index=future_index)
+
+	# Robust Seasonality Lookup (handling missing keys like Feb 29)
+	def get_seasonal_val(k):
+		if k in seasonal_map:
+			return seasonal_map[k]
+
+		# Fallback strategy:
+		# If Feb 29 (DOY 60 in leap year context, but typically handled by dayofyear) is missing:
+		# We check for neighbors.
+		# Note: In standard pandas dayofyear, Feb 29 is 60.
+		# If '60' is missing in the map (e.g. history had no leap years),
+		# we interpolate between 59 and 61 if they exist.
+		if freq == "doy" and k == 60:
+			val_59 = seasonal_map.get(59)
+			val_61 = seasonal_map.get(61)
+			if val_59 is not None and val_61 is not None:
+				return (val_59 + val_61) / 2.0
+			if val_59 is not None: return val_59
+			if val_61 is not None: return val_61
+
+		return seasonal_map.median()
+
+	future_season = pd.Series([get_seasonal_val(k) for k in future_key], index=future_index)
 	x_future = (future_index - idx[0]).days.to_numpy()
 	future_trend = pd.Series(intercept + slope * x_future, index=future_index)
 	deterministic_future = future_season + future_trend
+
+	# Phase 1: The "Physics Guard"
+	if clamp_min is not None:
+		deterministic_future = deterministic_future.clip(lower=clamp_min)
 
 	return SeasonTrendResult(
 		dates=future_index,
