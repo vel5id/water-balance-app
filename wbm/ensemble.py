@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from .simulate import simulate_forward
+from .seasonal import compute_acf, recommend_block_length
 
 
 @dataclass
@@ -20,7 +21,7 @@ def build_daily_ensemble(
     deterministic_future: pd.Series,
     residuals: pd.Series,
     n_members: int = 50,
-    block_size: int = 5,
+    block_size: Optional[int] = None,
     random_state: int | None = None,
     clamp_min: Optional[float] = 0.0,
 ) -> list[pd.Series]:
@@ -31,6 +32,8 @@ def build_daily_ensemble(
         residuals: Historical residuals to bootstrap.
         n_members: Number of ensemble members to generate.
         block_size: Size of contiguous blocks for bootstrapping.
+                    If None, it is estimated from ACF of residuals.
+                    If <= 0, defaults to 1 (simple bootstrap).
         random_state: Seed for reproducibility.
         clamp_min: If set, enforces physical validity (e.g. Precip >= 0).
                    Prevents 'Anti-Rain' (negative precipitation).
@@ -41,13 +44,27 @@ def build_daily_ensemble(
         return [deterministic_future.copy() for _ in range(n_members)]
     arr = res.to_numpy()
     L = len(arr)
+
+    # Auto-detect block size if needed
+    bs = 5 # Default fallback
+    if block_size is None:
+        try:
+            acf_df = compute_acf(res, max_lag=min(60, L // 2))
+            bs = recommend_block_length(acf_df, L)
+        except Exception:
+            bs = 5
+    elif block_size <= 0:
+        bs = 1
+    else:
+        bs = block_size
+
     blocks: list[pd.Series] = []
     for _ in range(n_members):
         needed = len(deterministic_future)
         out_vals = []
         while needed > 0:
-            start = rng.integers(0, max(1, L - block_size))
-            blk = arr[start : start + block_size]
+            start = rng.integers(0, max(1, L - bs))
+            blk = arr[start : start + bs]
             out_vals.append(blk)
             needed -= len(blk)
         seq = np.concatenate(out_vals)[: len(deterministic_future)]

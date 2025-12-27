@@ -28,3 +28,7 @@
 ## 2025-12-08 - [Topological Discontinuity at New Year]
 **Discovery:** Identified that seasonal smoothing logic used a linear rolling window, creating a discontinuity between Dec 31 and Jan 1 (topological error). A step function test showed a jump of 20.0 instead of 0.
 **Protocol:** Refactored `smooth_season_template` to use circular padding (prepending end, appending start) before rolling, restoring periodic continuity.
+
+## 2025-12-08 - [False Confidence Intervals]
+**Discovery:** The previous `theilsen_trend_ci` logic bootstrapped the Null Distribution (shuffling Y against Time), returning an interval centered at 0 instead of the trend estimate. This tested "Is there a trend?" but failed to describe "What is the uncertainty of the trend?".
+**Protocol:** Refactored to use `scipy.stats.theilslopes`'s analytical 95% Confidence Interval (based on Kendall's Tau inversion) when available, providing correct uncertainty bounds for the slope.

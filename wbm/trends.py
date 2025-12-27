@@ -64,64 +64,63 @@ def theilsen_trend(series: pd.Series) -> Tuple[float, float]:
 
 
 def theilsen_trend_ci(series: pd.Series, alpha: float = 0.05) -> Tuple[float, float, float, float]:
-    """Compute Theil–Sen slope & intercept with simple rank-based CI (bootstrap fallback).
+    """Compute Theil–Sen slope & intercept with robust Confidence Interval.
 
-    For simplicity: bootstrap residuals after median slope; not an exact analytical CI but adequate for UI.
-    Returns slope_per_year, intercept, lo, hi (slope per year units if index is a datetime).
+    Axiom Note: Uses Scipy's analytical CI (based on Kendall's tau) if available.
+    Fallback: Uses bootstrap (Null Distribution) which is less informative for trend magnitude uncertainty.
+
+    Returns (slope_per_year, intercept, lo_year, hi_year).
+    Units: slope scaled to per-year ( *365.25 ) if index is datetime.
     """
     s = series.dropna()
     if s.empty or len(s) < 3:
         return 0.0, float("nan"), 0.0, 0.0
-    slope, intercept = theilsen_trend(s)
-    # Convert slope to (value per year) if index is datetime
-    if isinstance(s.index, pd.DatetimeIndex):
-        days = (s.index[-1] - s.index[0]).days or 1
+
+    # Prepare data
+    y = s.to_numpy()
+    x = np.arange(len(y))
+
+    slope_per_day = 0.0
+    intercept = 0.0
+    lo = 0.0
+    hi = 0.0
+
+    if HAS_SCIPY:
+        # Robust Analytical CI
+        slope, intercept, lo, hi = stats.theilslopes(y, x, alpha=1.0 - alpha)
         slope_per_day = slope
-        slope_per_year = slope_per_day * 365.25
     else:
-        slope_per_year = slope
-    # Bootstrap
-    rng = np.random.default_rng(42)
-    B = min(300, 50 + 5 * len(s))
-    slopes = []
-    arr = s.to_numpy()
-    x = np.arange(len(arr))
-    for _ in range(B):
-        sample_idx = rng.integers(0, len(arr), size=len(arr))
-        sample_y = arr[sample_idx]
-        # Note: Bootstrapping slope usually requires resampling pairs (x, y) or residuals.
-        # Original code did: sample = arr[rng...], ss = pd.Series(sample, index=s.index)
-        # This effectively shuffles Y against fixed X (if index order preserved) or resamples Y.
-        # Actually original code: `ss = pd.Series(sample, index=s.index)` implies X is fixed (s.index), Y is randomized sample.
-        # This is essentially resampling Y with replacement against fixed time?
-        # This destroys the trend structure unless residuals are resampled.
-        # Wait, original code: `sample = arr[rng.integers(0, len(arr), size=len(arr))]`. This is simple bootstrap of Y.
-        # If Y has a trend, shuffling it removes the trend? No, it resamples with replacement.
-        # If I resample (t1, y1), (t2, y2)... then I keep structure?
-        # Original code seemed to just resample values and put them back on the original time index?
-        # That would destroy serial correlation AND the trend.
-        # But `theilsen_trend(ss)` would then find 0 slope on average?
-        # Wait, if I take a trending series [1, 2, 3] and resample to [1, 3, 2] on index [0, 1, 2], the trend is still roughly there.
-        # But if I get [3, 1, 3], it's noisy.
-        # The user said "bootstrap residuals after median slope". The original code didn't do that?
-        # Original code: `sample = arr[rng.integers(0, len(arr), size=len(arr))]`. This is raw bootstrap.
-        # Ah, the docstring says "For simplicity: bootstrap residuals...". But the code seems to do raw bootstrap.
-        # I should probably leave the logic alone to avoid changing statistical behavior unless requested.
-        # I will just update the inner call to `calculate_slope`.
+        # Fallback: Original Bootstrap (Warning: This tests H0, doesn't give slope CI)
+        # We keep it as legacy behavior for now if Scipy missing.
+        slope_per_day, intercept = theilsen_trend(s)
+        # Bootstrap
+        rng = np.random.default_rng(42)
+        B = min(300, 50 + 5 * len(s))
+        slopes = []
+        arr = s.to_numpy()
+        for _ in range(B):
+            sample_idx = rng.integers(0, len(arr), size=len(arr))
+            sample_y = arr[sample_idx]
+            # Use fixed x, shuffled y -> Null Distribution
+            sl = calculate_slope(sample_y, x)
+            slopes.append(sl)
+        slopes = np.sort(slopes)
+        lo_idx = int((alpha / 2) * (B - 1))
+        hi_idx = int((1 - alpha / 2) * (B - 1))
+        lo = float(slopes[lo_idx])
+        hi = float(slopes[hi_idx])
 
-        # However, `theilsen_trend` takes a Series.
-        # I'll stick to calling the optimized function.
-        sl = calculate_slope(sample_y, x)
+    # Convert units
+    if isinstance(s.index, pd.DatetimeIndex):
+        slope_year = slope_per_day * 365.25
+        lo_year = lo * 365.25
+        hi_year = hi * 365.25
+    else:
+        slope_year = slope_per_day
+        lo_year = lo
+        hi_year = hi
 
-        if isinstance(s.index, pd.DatetimeIndex):
-            sl = sl * 365.25
-        slopes.append(sl)
-    slopes = np.sort(slopes)
-    lo_idx = int((alpha / 2) * (B - 1))
-    hi_idx = int((1 - alpha / 2) * (B - 1))
-    lo = float(slopes[lo_idx])
-    hi = float(slopes[hi_idx])
-    return float(slope_per_year), float(intercept), lo, hi
+    return float(slope_year), float(intercept), float(lo_year), float(hi_year)
 
 
 def kendall_significance(series: pd.Series) -> Tuple[float, float]:
