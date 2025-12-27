@@ -30,35 +30,60 @@ def simulate_forward(
     dates = pd.date_range(start_date, end_date, freq="D")
     n = len(dates)
 
+    # Pre-calculate P/ET arrays to avoid repeated lookups inside the loop
+    def _prepare_flux_array(daily_series: Optional[pd.Series], clim_series: pd.Series, scale: float) -> np.ndarray:
+        if daily_series is not None and not daily_series.empty:
+            # Reindex to full date range, filling missing dates with 0.0
+            # Assuming daily_series is date-indexed
+            s = daily_series.reindex(dates, fill_value=0.0)
+            return s.to_numpy(dtype=float) * scale
+        else:
+            # Use climatology based on DOY
+            # Map DOY 1..366 to values.
+            # Create lookup array for 1..366 (size 367)
+            clim_lookup = np.zeros(367, dtype=float)
+            # Only use indices present in clim_series that are within range
+            valid_idx = clim_series.index[clim_series.index <= 366]
+            clim_lookup[valid_idx] = clim_series[valid_idx].to_numpy(dtype=float)
+
+            # Map dates to DOY
+            doys = dates.dayofyear.to_numpy()
+
+            # Handle leap year Feb 29 -> DOY 60 in pandas.
+            # Original logic: if dt.month == 2 and dt.day == 29: doy = 59
+            # Feb 29 is month 2, day 29.
+            # In pandas dayofyear:
+            # Jan 1 = 1
+            # ...
+            # Feb 28 = 59
+            # Feb 29 = 60
+            # Mar 1 = 61 (leap) or 60 (non-leap)
+
+            # We want Feb 29 to map to 59 (Feb 28 climatology).
+            is_leap_feb29 = (dates.month == 2) & (dates.day == 29)
+            if is_leap_feb29.any():
+                doys[is_leap_feb29] = 59
+
+            return clim_lookup[doys] * scale
+
+    p_mm_arr = _prepare_flux_array(p_daily, p_clim, p_scale)
+    et_mm_arr = _prepare_flux_array(et_daily, et_clim, et_scale)
+
     vol = np.empty(n, dtype=float)
     area = np.empty(n, dtype=float)
     p_mcm = np.empty(n, dtype=float)
     et_mcm = np.empty(n, dtype=float)
 
     vol[0] = init_volume_mcm
-    for i, dt in enumerate(dates):
 
+    # Loop for sequential volume update
+    for i in range(n):
         # Area from current volume
         area[i] = max(0.0, vol_to_area(vol[i]))
 
-        # P/ET for this date
-        if p_daily is not None and not p_daily.empty:
-            p_mm = float(p_daily.get(dt, 0.0)) * p_scale
-        else:
-            doy = dt.dayofyear
-            if dt.month == 2 and dt.day == 29:
-                doy = 59
-            p_mm = float(p_clim.get(doy, 0.0)) * p_scale
-        if et_daily is not None and not et_daily.empty:
-            et_mm = float(et_daily.get(dt, 0.0)) * et_scale
-        else:
-            doy = dt.dayofyear
-            if dt.month == 2 and dt.day == 29:
-                doy = 59
-            et_mm = float(et_clim.get(doy, 0.0)) * et_scale
-
-        p_mcm[i] = p_mm * area[i] / 1000.0
-        et_mcm[i] = et_mm * area[i] / 1000.0
+        # Calculate fluxes in MCM
+        p_mcm[i] = p_mm_arr[i] * area[i] / 1000.0
+        et_mcm[i] = et_mm_arr[i] * area[i] / 1000.0
 
         if i < n - 1:
             vol[i+1] = vol[i] + p_mcm[i] - et_mcm[i] + q_in_mcm_per_day - q_out_mcm_per_day
@@ -149,20 +174,26 @@ def simulate_forward_era5(
     et_mm = _prep(daily_evap_mm) * float(evap_scale)
     ro_mm = _prep(daily_runoff_mm) * float(runoff_scale) if daily_runoff_mm is not None else None
 
+    # Optimize by converting to numpy arrays for faster indexing in loop
+    p_mm_arr = p_mm.to_numpy(dtype=float)
+    et_mm_arr = et_mm.to_numpy(dtype=float)
+    ro_mm_arr = ro_mm.to_numpy(dtype=float) if ro_mm is not None else None
+
     n = len(dates)
     vol = np.empty(n, dtype=float)
     area = np.empty(n, dtype=float)
     p_mcm = np.empty(n, dtype=float)
     et_mcm = np.empty(n, dtype=float)
-    ro_mcm = np.empty(n, dtype=float) if ro_mm is not None else None
+    ro_mcm = np.empty(n, dtype=float) if ro_mm_arr is not None else None
 
     vol[0] = init_volume_mcm
-    for i, dt in enumerate(dates):
+    for i in range(n):
         area[i] = max(0.0, vol_to_area(vol[i]))
-        p_mcm[i] = p_mm.iloc[i] * area[i] / 1000.0
-        et_mcm[i] = et_mm.iloc[i] * area[i] / 1000.0
-        if ro_mm is not None and ro_mcm is not None:
-            ro_mcm[i] = ro_mm.iloc[i] * area[i] / 1000.0
+        p_mcm[i] = p_mm_arr[i] * area[i] / 1000.0
+        et_mcm[i] = et_mm_arr[i] * area[i] / 1000.0
+        if ro_mm_arr is not None:
+            ro_mcm[i] = ro_mm_arr[i] * area[i] / 1000.0
+
         if i < n - 1:
             delta = p_mcm[i] - et_mcm[i]
             if ro_mcm is not None:
