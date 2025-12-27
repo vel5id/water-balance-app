@@ -25,6 +25,8 @@ def build_daily_ensemble(
     random_state: int | None = None,
     clamp_min: Optional[float] = 0.0,
     transformation: Literal["none", "log1p"] = "none",
+    trend_slope_std_per_year: Optional[float] = None,
+    trend_origin_date: Optional[pd.Timestamp] = None,
 ) -> list[pd.Series]:
     """Bootstrap residuals (moving contiguous blocks) and add to deterministic path.
 
@@ -39,12 +41,10 @@ def build_daily_ensemble(
         clamp_min: If set, enforces physical validity (e.g. Precip >= 0).
                    Prevents 'Anti-Rain' (negative precipitation).
         transformation: Data transformation used during modeling.
-                        If "log1p", `deterministic_future` is expected to be in LINEAR space (output of forecast),
-                        while `residuals` are in LOG space (from modeling).
-                        We must:
-                        1. Transform `deterministic_future` -> Log Space.
-                        2. Add bootstrapped `residuals` (Log Space).
-                        3. Transform back -> Linear Space.
+        trend_slope_std_per_year: Uncertainty of the trend slope (sigma).
+                                  If provided, each member will have a random slope perturbation added.
+        trend_origin_date: The 't=0' anchor date for the trend perturbation fan.
+                           Typically the end of the historical calibration period.
     """
     rng = np.random.default_rng(random_state)
     res = residuals.dropna()
@@ -78,6 +78,22 @@ def build_daily_ensemble(
         seq = np.concatenate(out_vals)[: len(deterministic_future)]
         blocks.append(pd.Series(seq, index=deterministic_future.index))
 
+    # Prepare Trend Perturbation
+    trend_perturbations = np.zeros((n_members, len(deterministic_future)))
+    if trend_slope_std_per_year is not None and trend_origin_date is not None and trend_slope_std_per_year > 0:
+        # Convert to daily sigma
+        sigma_day = trend_slope_std_per_year / 365.25
+        # Sample slopes for each member: delta_slope ~ N(0, sigma)
+        delta_slopes = rng.normal(0.0, sigma_day, size=n_members)
+
+        # Calculate time vector t (days from origin)
+        # origin is usually just before the forecast start.
+        # dates in deterministic_future
+        t_days = (deterministic_future.index - trend_origin_date).days.to_numpy()
+
+        # Outer product: perturbation[i, j] = delta_slopes[i] * t_days[j]
+        trend_perturbations = np.outer(delta_slopes, t_days)
+
     # Generate members
     members = []
 
@@ -85,22 +101,25 @@ def build_daily_ensemble(
     if transformation == "log1p":
         # deterministic_future is already back-transformed (expm1) in forecast.py
         # We need it in LOG space to add LOG residuals.
-        # But wait, expm1(log1p(0)) = 0.
-        # Are we sure deterministic_future is positive?
-        # Forecast clamps it if clamp_min >= 0.
         base_log = np.log1p(deterministic_future)
     else:
         base_log = deterministic_future
 
-    for b in blocks:
-        # b contains bootstrapped residuals (which are in log-space if transformation="log1p")
+    for i in range(n_members):
+        b = blocks[i] # Series
+        t_pert = trend_perturbations[i] # Array
+
+        # Add Residuals AND Trend Perturbation
+        # b is Series, t_pert is Array. Alignment matches length.
+        # Add t_pert to the model space.
+
         if transformation == "log1p":
             # Add in Log Space
-            member_log = base_log + b
+            member_log = base_log + b + t_pert
             # Back to Linear
             member = np.expm1(member_log)
         else:
-            member = base_log + b
+            member = base_log + b + t_pert
 
         if clamp_min is not None:
             member = member.clip(lower=clamp_min)

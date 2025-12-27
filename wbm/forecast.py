@@ -16,6 +16,7 @@ class SeasonTrendResult:
 	residuals: pd.Series
 	transformation: Literal["none", "log1p"] = "none"
 	slope_ci_per_year: Optional[Tuple[float, float]] = None # CI of slope (per year)
+	trend_origin_date: Optional[pd.Timestamp] = None # Anchor date for trend model ($t=0$ for forecast)
 
 
 def build_robust_season_trend_series(
@@ -97,14 +98,6 @@ def build_robust_season_trend_series(
     # Check if we should override intercept based on seasonal_agg (Mean mass conservation)
 	if seasonal_agg == "mean":
 		intercept = float(np.mean(detrended.to_numpy() - slope * x))
-	# Else keep median intercept from theilsen_trend_ci (it uses median internally in fallback,
-    # but scipy returns intercept too? wbm.trends.theilsen_trend_ci returns intercept.
-    # Note: Scipy TheilSen intercept is median-based.
-
-    # Wait, theilsen_trend_ci returns intercept. But if I override it?
-    # I should use the one consistent with my logic.
-    # If seasonal_agg is median, use median intercept (default).
-    # If seasonal_agg is mean, use mean intercept.
 
 	trend_component = pd.Series(intercept + slope * x, index=idx)
 	deterministic_hist = season_component + trend_component
@@ -159,7 +152,8 @@ def build_robust_season_trend_series(
 		trend_component=trend_component,
 		residuals=residuals,
         transformation=transformation,
-        slope_ci_per_year=(lo_yr, hi_yr)
+        slope_ci_per_year=(lo_yr, hi_yr),
+        trend_origin_date=idx[0] # Trend x was (idx - idx[0]).days. So origin is idx[0].
 	)
 
 
