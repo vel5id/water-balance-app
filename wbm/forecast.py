@@ -4,43 +4,7 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 from typing import Literal, Optional
-try:
-	from scipy import stats
-	HAS_SCIPY = True
-except ImportError:
-	HAS_SCIPY = False
-
-
-def _theil_sen_slope(y: np.ndarray, x: np.ndarray) -> float:
-	"""Return Theil–Sen median slope for y vs x.
-
-	Uses scipy.stats.theilslopes if available for standardized implementation.
-	Falls back to a custom implementation if scipy is missing.
-	"""
-	n = len(y)
-	if n < 2:
-		return 0.0
-
-	if HAS_SCIPY:
-		# scipy.stats.theilslopes returns (slope, intercept, low_slope, high_slope)
-		# We only need the slope (median slope).
-		# alpha=0.95 is default, impact is on confidence intervals which we ignore.
-		res = stats.theilslopes(y, x, alpha=0.95)
-		return float(res[0])
-
-	# Fallback O(N^2) implementation
-	slopes = []
-	for i in range(n - 1):
-		dy = y[i + 1 :] - y[i]
-		dx = x[i + 1 :] - x[i]
-		valid = dx != 0
-		s = dy[valid] / dx[valid]
-		if s.size:
-			slopes.append(s)
-	if not slopes:
-		return 0.0
-	all_slopes = np.concatenate(slopes)
-	return float(np.median(all_slopes))
+from .trends import calculate_slope
 
 
 @dataclass
@@ -98,7 +62,7 @@ def build_robust_season_trend_series(
 
 	detrended = s - season_component
 	x = (idx - idx[0]).days.to_numpy()
-	slope = _theil_sen_slope(detrended.to_numpy(), x)
+	slope = calculate_slope(detrended.to_numpy(), x)
 	intercept = float(np.median(detrended.to_numpy() - slope * x))
 	trend_component = pd.Series(intercept + slope * x, index=idx)
 	deterministic_hist = season_component + trend_component

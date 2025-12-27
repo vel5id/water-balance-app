@@ -14,3 +14,9 @@
 **Discovery:** Identified that adding bootstrapped residuals to low-value deterministic baselines (like arid region precipitation) results in negative values ("Anti-Rain").
 **Discovery:** The assumption of Deterministic Evaporation in ensembles artificially narrows the uncertainty cone during droughts.
 **Protocol:** All ensemble generators for physical quantities must accept a `clamp_min` argument. Distributions must be truncated, not just shifted. `run_volume_ensemble` has been refactored to support ET uncertainty via `et_residual_sets`.
+
+## 2025-12-08 - [Math Consolidation & Metrics]
+**Discovery:** Identified duplicated $O(N^2)$ Theil-Sen loops across `forecast.py`, `trends.py`, and `seasonal.py`.
+**Protocol:** Consolidated trend logic into `wbm/trends.py` as the authority, using `scipy.stats.theilslopes` ($O(N \log N)$).
+**Discovery:** Identified "Metric Singularity" risk where NSE/KGE crash on constant observed data (zero variance).
+**Protocol:** Implemented Epsilon Guards in `wbm/analysis.py` to handle zero-variance cases gracefully (returning `-inf`).

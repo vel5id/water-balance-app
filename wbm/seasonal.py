@@ -66,6 +66,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from typing import Literal, Sequence, Tuple
+from .trends import calculate_slope
 
 SeasonFreq = Literal["doy", "month"]
 
@@ -96,20 +97,11 @@ def robust_seasonal_template(series: pd.Series, freq: SeasonFreq) -> pd.Series:
 
 
 def theil_sen_trend(values: np.ndarray) -> float:
-    n = len(values)
-    if n < 2:
-        return 0.0
-    slopes = []
-    for i in range(n - 1):
-        dy = values[i + 1 :] - values[i]
-        dx = np.arange(i + 1, n) - i
-        valid = dx != 0
-        if valid.any():
-            slopes.append(dy[valid] / dx[valid])
-    if not slopes:
-        return 0.0
-    all_slopes = np.concatenate(slopes)
-    return float(np.median(all_slopes))
+    """Return Theil–Sen median slope for values.
+
+    Axiom: Wrapper around centralized wbm.trends.calculate_slope.
+    """
+    return calculate_slope(values)
 
 
 def compute_acf(values: Sequence[float], max_lag: int = 30) -> pd.DataFrame:
@@ -175,7 +167,7 @@ def theil_sen_trend_ci_boot(
     else:
         seas_vals = template.reindex(range(1, 13)).to_numpy()[k - 1]
     detr = s.to_numpy() - seas_vals
-    slope_day = theil_sen_trend(detr)
+    slope_day = calculate_slope(detr)
     rng = np.random.default_rng(random_state)
     slopes = []
     idx_arr = np.arange(n)
@@ -192,7 +184,7 @@ def theil_sen_trend_ci_boot(
             resampled.append(blk)
             pos += block_size
         boot_seq = np.concatenate(resampled)[:n]
-        slopes.append(theil_sen_trend(boot_seq))
+        slopes.append(calculate_slope(boot_seq))
     slopes = np.sort(np.array(slopes))
     lo = slopes[int(0.025 * (len(slopes) - 1))]
     hi = slopes[int(0.975 * (len(slopes) - 1))]
@@ -221,7 +213,7 @@ def describe_season_trend(series: pd.Series, freq: SeasonFreq = "doy") -> dict:
     else:
         seas_vals = template.reindex(range(1, 13)).to_numpy()[k - 1]
     detr = s.to_numpy() - seas_vals
-    slope_per_day = theil_sen_trend(detr)
+    slope_per_day = calculate_slope(detr)
     slope_per_year = slope_per_day * 365.25
     residuals = detr - (detr * 0 + np.median(detr))  # center residuals (already removed slope for simplicity)
     amp = float(np.nanpercentile(seas_vals, 95) - np.nanpercentile(seas_vals, 5))
