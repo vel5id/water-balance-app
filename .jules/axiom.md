@@ -36,3 +36,7 @@
 ## 2025-12-08 - [The Shrinking Basin Paradox]
 **Discovery:** `simulate_forward_era5` was scaling Runoff depth (mm) by the dynamic Lake Area instead of the static Catchment Area. This creates a feedback loop: shrinking lake -> less calculated inflow -> shrinking lake.
 **Protocol:** Added `catchment_area_km2` parameter to decouple inflow from reservoir size. Logs a warning if Runoff is used without a Catchment Area anchor.
+
+## 2025-12-08 - [The Ghost Storm]
+**Discovery:** The `ffill` method was applied indiscriminately to all inputs in simulation. A missing data gap during a precipitation event would propagate that rain rate forward indefinitely ("Ghost Storm").
+**Protocol:** Hard-coded `fillna(0.0)` for Flux variables (Precipitation, Runoff) within `simulate_forward_era5`, overriding the generic fill method. Only state variables (Temp/Evap) use persistence filling.

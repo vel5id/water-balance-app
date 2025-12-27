@@ -167,6 +167,8 @@ def simulate_forward_era5(
         Constant external inflow/outflow (mcm/day) added after surface fluxes each step.
     fill_method : str
         Method to fill internal gaps in daily series ("ffill", "bfill", or "none").
+        NOTE: Flux variables (Precipitation, Runoff) are FORCED to fill with 0.0 to prevent
+        "Ghost Storms" (artificial rain creation during gaps). Evaporation uses this setting.
 
     Returns
     -------
@@ -189,22 +191,31 @@ def simulate_forward_era5(
         raise ValueError("Simulation scales cannot be NaN.")
 
     dates = pd.date_range(start_date, end_date, freq="D")
+
     # Normalize input series to full date range
-    def _prep(s: pd.Series) -> pd.Series:
+    def _prep(s: pd.Series, is_flux: bool = False) -> pd.Series:
         if s is None or s.empty:
             return pd.Series(index=dates, data=0.0, dtype=float)
         ss = s.copy()
         if not isinstance(ss.index, pd.DatetimeIndex):
             ss.index = pd.to_datetime(ss.index)
         ss = ss.sort_index().reindex(dates)
-        if fill_method in ("ffill", "bfill"):
-            ss = getattr(ss, fill_method)()  # type: ignore[attr-defined]
-        ss = ss.fillna(0.0)
+
+        if is_flux:
+            # FLUXES (Rain/Runoff): Missing = 0. Ghost Storm Prevention.
+            ss = ss.fillna(0.0)
+        else:
+            # STATES (Temp/Evap): Persistence is okay.
+            if fill_method in ("ffill", "bfill"):
+                ss = getattr(ss, fill_method)()  # type: ignore[attr-defined]
+            ss = ss.fillna(0.0)
+
         return ss.astype(float)
 
-    p_mm = _prep(daily_precip_mm) * float(precip_scale)
-    et_mm = _prep(daily_evap_mm) * float(evap_scale)
-    ro_mm = _prep(daily_runoff_mm) * float(runoff_scale) if daily_runoff_mm is not None else None
+    p_mm = _prep(daily_precip_mm, is_flux=True) * float(precip_scale)
+    et_mm = _prep(daily_evap_mm, is_flux=False) * float(evap_scale)
+    # Runoff is a flux
+    ro_mm = _prep(daily_runoff_mm, is_flux=True) * float(runoff_scale) if daily_runoff_mm is not None else None
 
     n = len(dates)
     vol = np.empty(n, dtype=float)
