@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
+import logging
 from typing import Optional, Callable
+
+# Setup logger
+logger = logging.getLogger("wbm.simulate")
 
 # Constants
 MM_KM2_TO_MCM_FACTOR: float = 1000.0
@@ -129,6 +133,7 @@ def simulate_forward_era5(
     daily_evap_mm: pd.Series,
     *,
     daily_runoff_mm: Optional[pd.Series] = None,
+    catchment_area_km2: Optional[float] = None,
     precip_scale: float = 1.0,
     evap_scale: float = 1.0,
     runoff_scale: float = 1.0,
@@ -149,9 +154,13 @@ def simulate_forward_era5(
     daily_precip_mm, daily_evap_mm : pd.Series
         Date-indexed (normalized) daily mm values. Index must be DatetimeIndex.
     daily_runoff_mm : Optional[pd.Series]
-        Optional date-indexed runoff (mm/day) over the active area (if representing net runoff to reservoir surface). If this
-        represents a contributing basin larger than reservoir area, pre-scale externally to mm-equivalent on reservoir area
-        or convert to an explicit volumetric inflow and supply via q_in_mcm_per_day.
+        Optional date-indexed runoff (mm/day).
+        WARNING: If catchment_area_km2 is NOT provided, this is interpreted as runoff depth
+        over the dynamic reservoir surface (Inflow = mm * Area(t)), which is physically unusual
+        for basin runoff (leads to positive feedback: smaller lake -> less inflow).
+    catchment_area_km2 : Optional[float]
+        Static catchment area. If provided, Inflow = daily_runoff_mm * catchment_area_km2.
+        This decouples inflow from the shrinking reservoir surface.
     precip_scale, evap_scale, runoff_scale : float
         Multiplicative scalars for scenario experimentation.
     q_in_mcm_per_day, q_out_mcm_per_day : float
@@ -169,7 +178,8 @@ def simulate_forward_era5(
     Notes
     -----
     * Precipitation / evaporation volumes computed as mm * area_km2 / MM_KM2_TO_MCM_FACTOR.
-    * Runoff term (if provided) is treated analogously and added to volume.
+    * Runoff term (if provided) is treated as mm * catchment_area / MM_KM2_TO_MCM_FACTOR (if area provided)
+      or mm * reservoir_area (legacy behavior).
     * residual_mcm = delta_volume_mcm - P + ET - (runoff?) after accounting for q_in/q_out.
     """
     # Axiom Guards: Input Validation
@@ -204,6 +214,15 @@ def simulate_forward_era5(
     ro_mcm = np.empty(n, dtype=float) if ro_mm is not None else None
 
     vol[0] = init_volume_mcm
+
+    # Check for legacy runoff behavior warning
+    if ro_mm is not None and catchment_area_km2 is None:
+        logger.warning(
+            "⚠️ PHYSICS VIOLATION: calculating Inflow based on dynamic Reservoir Area. "
+            "This creates a positive feedback loop (Shrinking Basin Paradox). "
+            "Provide `catchment_area_km2` to fix."
+        )
+
     for i, dt in enumerate(dates):
         current_area = vol_to_area(vol[i])
         if np.isnan(current_area):
@@ -213,8 +232,15 @@ def simulate_forward_era5(
 
         p_mcm[i] = p_mm.iloc[i] * area[i] / MM_KM2_TO_MCM_FACTOR
         et_mcm[i] = et_mm.iloc[i] * area[i] / MM_KM2_TO_MCM_FACTOR
+
         if ro_mm is not None and ro_mcm is not None:
-            ro_mcm[i] = ro_mm.iloc[i] * area[i] / MM_KM2_TO_MCM_FACTOR
+            if catchment_area_km2 is not None:
+                # AXIOM: Physically correct scaling
+                ro_mcm[i] = ro_mm.iloc[i] * catchment_area_km2 / MM_KM2_TO_MCM_FACTOR
+            else:
+                # LEGACY: Scaled by Lake Area
+                ro_mcm[i] = ro_mm.iloc[i] * area[i] / MM_KM2_TO_MCM_FACTOR
+
         if i < n - 1:
             delta = p_mcm[i] - et_mcm[i]
             if ro_mcm is not None:

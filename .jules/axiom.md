@@ -32,3 +32,7 @@
 ## 2025-12-08 - [False Confidence Intervals]
 **Discovery:** The previous `theilsen_trend_ci` logic bootstrapped the Null Distribution (shuffling Y against Time), returning an interval centered at 0 instead of the trend estimate. This tested "Is there a trend?" but failed to describe "What is the uncertainty of the trend?".
 **Protocol:** Refactored to use `scipy.stats.theilslopes`'s analytical 95% Confidence Interval (based on Kendall's Tau inversion) when available, providing correct uncertainty bounds for the slope.
+
+## 2025-12-08 - [The Shrinking Basin Paradox]
+**Discovery:** `simulate_forward_era5` was scaling Runoff depth (mm) by the dynamic Lake Area instead of the static Catchment Area. This creates a feedback loop: shrinking lake -> less calculated inflow -> shrinking lake.
+**Protocol:** Added `catchment_area_km2` parameter to decouple inflow from reservoir size. Logs a warning if Runoff is used without a Catchment Area anchor.
