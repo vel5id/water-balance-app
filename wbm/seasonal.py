@@ -207,13 +207,35 @@ def theil_sen_trend_ci_boot(
 
 
 def smooth_season_template(template: pd.Series, window: int = 0) -> pd.Series:
-    """Optionally apply centered rolling median smoothing to a seasonal template.
+    """Optionally apply centered rolling median smoothing to a seasonal template with circular boundary.
 
     window=0 disables smoothing.
     """
     if window is None or window <= 1:
         return template
-    return template.rolling(window=window, center=True, min_periods=max(2, window // 2)).median().interpolate(limit_direction="both")
+
+    # Check if template covers full cycle (e.g. 366 for DOY)
+    n = len(template)
+    if n < window:
+        return template # Too small to smooth reliably
+
+    # Circular Padding
+    pad_width = window // 2 + 1
+    pad_start = template.iloc[-pad_width:]
+    pad_end = template.iloc[:pad_width]
+
+    # Use reset_index(drop=True) to avoid ambiguous index during rolling
+    padded = pd.concat([pad_start, template, pad_end], ignore_index=True)
+
+    # Apply rolling median
+    smoothed_padded = padded.rolling(window=window, center=True, min_periods=max(2, window // 2)).median()
+
+    # Slice back the center
+    # padded structure indices: 0..pad_width-1 (start), pad_width..pad_width+n-1 (template), ...
+    smoothed_values = smoothed_padded.iloc[pad_width : pad_width + n].values
+
+    # Return as Series with original index
+    return pd.Series(smoothed_values, index=template.index)
 
 
 def describe_season_trend(series: pd.Series, freq: SeasonFreq = "doy") -> dict:

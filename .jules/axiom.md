@@ -24,3 +24,7 @@
 ## 2025-12-08 - [Zero-Inflated Median Trap]
 **Discovery:** Identified that robust Median seasonality/trend logic fails catastrophically for zero-inflated variables (e.g., Arid Precipitation), estimating ~0 volume when true volume is significant.
 **Protocol:** Refactored `build_robust_season_trend_series` and `robust_seasonal_template` to support `seasonal_agg="mean"`. If "mean" is selected, the trend intercept calculation also switches to Mean to ensure mass conservation.
+
+## 2025-12-08 - [Topological Discontinuity at New Year]
+**Discovery:** Identified that seasonal smoothing logic used a linear rolling window, creating a discontinuity between Dec 31 and Jan 1 (topological error). A step function test showed a jump of 20.0 instead of 0.
+**Protocol:** Refactored `smooth_season_template` to use circular padding (prepending end, appending start) before rolling, restoring periodic continuity.
