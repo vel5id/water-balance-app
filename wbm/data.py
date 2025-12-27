@@ -131,6 +131,12 @@ def build_daily_climatology(df: pd.DataFrame, date_col: str, value_col: str) -> 
     """Return Series indexed by day-of-year (1..366) with mean value per DOY.
 
     Works even if leap days present; uses DOY 60 for Feb 29 by mapping to 59.
+
+    WARNING:
+        This function maps Feb 29th (Leap) to DOY 59, grouping it with Feb 28th.
+        As a result, DOY 60 in the output represents March 1st (Non-Leap), but is
+        skipped/interpolated in Leap years (since Feb 29 -> 59, Mar 1 -> 61).
+        This creates a mixed phenology for indices 60+.
     """
     if df.empty or value_col not in df.columns:
         return pd.Series(dtype=float)

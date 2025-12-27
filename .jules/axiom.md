@@ -1,0 +1,3 @@
+## 2024-05-23 - Temporal Distortion in Climatology Indexing
+**Discovery:** The legacy leap-year handling maps Feb 29th (Leap) to Day 59, grouping it with Feb 28th. Consequently, indices 60+ in the climatology represent a mix of dates depending on leap/non-leap status (e.g., Index 60 is Mar 1 in Non-Leap, but Mar 1 is 61 in Leap).
+**Protocol:** We have formalized this behavior in `get_climatology_index` to prevent accidental refactoring that would change numerical results. Future versions (v2.0) should adopt a strict 1-366 mapping or a robust `dayofyear` strategy, but for now, we preserve the quirk for reproducibility.
