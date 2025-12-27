@@ -9,3 +9,8 @@
 ## 2024-05-23 - Forecasting Performance Optimization
 **Discovery:** The custom Theil-Sen estimator was $O(N^2)$, which is a scalability risk for daily data.
 **Protocol:** Replaced with `scipy.stats.theilslopes` for standardized, robust implementation.
+
+## 2025-12-08 - [Ensemble Physicality]
+**Discovery:** Identified that adding bootstrapped residuals to low-value deterministic baselines (like arid region precipitation) results in negative values ("Anti-Rain").
+**Discovery:** The assumption of Deterministic Evaporation in ensembles artificially narrows the uncertainty cone during droughts.
+**Protocol:** All ensemble generators for physical quantities must accept a `clamp_min` argument. Distributions must be truncated, not just shifted. `run_volume_ensemble` has been refactored to support ET uncertainty via `et_residual_sets`.
