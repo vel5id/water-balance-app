@@ -69,6 +69,7 @@ from typing import Literal, Sequence, Tuple
 from .trends import calculate_slope
 
 SeasonFreq = Literal["doy", "month"]
+AggMethod = Literal["median", "mean"]
 
 
 def seasonal_keys(dates: pd.DatetimeIndex, freq: SeasonFreq) -> np.ndarray:
@@ -81,12 +82,26 @@ def seasonal_keys(dates: pd.DatetimeIndex, freq: SeasonFreq) -> np.ndarray:
     return dates.month.to_numpy()
 
 
-def robust_seasonal_template(series: pd.Series, freq: SeasonFreq) -> pd.Series:
+def robust_seasonal_template(series: pd.Series, freq: SeasonFreq, method: AggMethod = "median") -> pd.Series:
+    """Compute seasonal template with interpolation.
+
+    Args:
+        series: Time series.
+        freq: "doy" or "month".
+        method: Aggregation method ("median" or "mean").
+                Use "mean" for mass-conservation in zero-inflated variables (Precip).
+                Use "median" for robustness to outliers (Temp).
+    """
     s = series.dropna().sort_index()
     if s.empty:
         return pd.Series(dtype=float)
     k = seasonal_keys(s.index, freq)
-    grp = s.groupby(k).median()
+
+    if method == "mean":
+        grp = s.groupby(k).mean()
+    else:
+        grp = s.groupby(k).median()
+
     # Ensure full key coverage
     if freq == "doy":
         full_index = range(1, 367)

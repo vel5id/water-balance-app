@@ -23,6 +23,7 @@ def build_robust_season_trend_series(
 	future_days: int = 180,
 	min_history: int = 90,
 	clamp_min: Optional[float] = 0.0,
+    seasonal_agg: Literal["median", "mean"] = "median",
 ) -> SeasonTrendResult:
 	r"""Decompose daily series into robust seasonal + Theil–Sen trend and extend deterministically.
 
@@ -44,6 +45,11 @@ def build_robust_season_trend_series(
 		Lower bound for forecasted values. Essential for physical variables (P, ET)
 		to prevent negative predictions ("anti-rain") from drying trends.
 		Set to None to disable clamping.
+	seasonal_agg : {'median', 'mean'}, default='median'
+		Aggregation method for seasonal template.
+		- 'median': Robust to outliers (default).
+		- 'mean': Conserves mass. Preferred for zero-inflated variables like
+		  Precipitation in arid regions where median might be 0.
 	"""
 	s = series.dropna().sort_index()
 	if len(s) < min_history:
@@ -55,7 +61,11 @@ def build_robust_season_trend_series(
 	else:
 		key = idx.month
 
-	seasonal_map = s.groupby(key).median()
+	if seasonal_agg == "mean":
+		seasonal_map = s.groupby(key).mean()
+	else:
+		seasonal_map = s.groupby(key).median()
+
 	season_component = pd.Series(index=idx, dtype=float)
 	for k, val in seasonal_map.items():
 		season_component.loc[key == k] = val
@@ -63,7 +73,14 @@ def build_robust_season_trend_series(
 	detrended = s - season_component
 	x = (idx - idx[0]).days.to_numpy()
 	slope = calculate_slope(detrended.to_numpy(), x)
-	intercept = float(np.median(detrended.to_numpy() - slope * x))
+
+	# Axiom: If using mean seasonality, we likely want mass conservation,
+	# so we should use the Mean for the intercept as well, rather than Median.
+	if seasonal_agg == "mean":
+		intercept = float(np.mean(detrended.to_numpy() - slope * x))
+	else:
+		intercept = float(np.median(detrended.to_numpy() - slope * x))
+
 	trend_component = pd.Series(intercept + slope * x, index=idx)
 	deterministic_hist = season_component + trend_component
 	residuals = s - deterministic_hist
@@ -80,11 +97,6 @@ def build_robust_season_trend_series(
 			return seasonal_map[k]
 
 		# Fallback strategy:
-		# If Feb 29 (DOY 60 in leap year context, but typically handled by dayofyear) is missing:
-		# We check for neighbors.
-		# Note: In standard pandas dayofyear, Feb 29 is 60.
-		# If '60' is missing in the map (e.g. history had no leap years),
-		# we interpolate between 59 and 61 if they exist.
 		if freq == "doy" and k == 60:
 			val_59 = seasonal_map.get(59)
 			val_61 = seasonal_map.get(61)
@@ -93,6 +105,9 @@ def build_robust_season_trend_series(
 			if val_59 is not None: return val_59
 			if val_61 is not None: return val_61
 
+		# Fallback to global central tendency
+		if seasonal_agg == "mean":
+			return seasonal_map.mean()
 		return seasonal_map.median()
 
 	future_season = pd.Series([get_seasonal_val(k) for k in future_key], index=future_index)

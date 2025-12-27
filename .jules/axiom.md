@@ -20,3 +20,7 @@
 **Protocol:** Consolidated trend logic into `wbm/trends.py` as the authority, using `scipy.stats.theilslopes` ($O(N \log N)$).
 **Discovery:** Identified "Metric Singularity" risk where NSE/KGE crash on constant observed data (zero variance).
 **Protocol:** Implemented Epsilon Guards in `wbm/analysis.py` to handle zero-variance cases gracefully (returning `-inf`).
+
+## 2025-12-08 - [Zero-Inflated Median Trap]
+**Discovery:** Identified that robust Median seasonality/trend logic fails catastrophically for zero-inflated variables (e.g., Arid Precipitation), estimating ~0 volume when true volume is significant.
+**Protocol:** Refactored `build_robust_season_trend_series` and `robust_seasonal_template` to support `seasonal_agg="mean"`. If "mean" is selected, the trend intercept calculation also switches to Mean to ensure mass conservation.
