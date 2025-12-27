@@ -85,6 +85,9 @@ def build_daily_ensemble(
     if transformation == "log1p":
         # deterministic_future is already back-transformed (expm1) in forecast.py
         # We need it in LOG space to add LOG residuals.
+        # But wait, expm1(log1p(0)) = 0.
+        # Are we sure deterministic_future is positive?
+        # Forecast clamps it if clamp_min >= 0.
         base_log = np.log1p(deterministic_future)
     else:
         base_log = deterministic_future

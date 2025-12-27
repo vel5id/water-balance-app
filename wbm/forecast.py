@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
-from typing import Literal, Optional
-from .trends import calculate_slope
+from typing import Literal, Optional, Tuple
+from .trends import calculate_slope, theilsen_trend_ci
 
 
 @dataclass
@@ -15,6 +15,7 @@ class SeasonTrendResult:
 	trend_component: pd.Series
 	residuals: pd.Series
 	transformation: Literal["none", "log1p"] = "none"
+	slope_ci_per_year: Optional[Tuple[float, float]] = None # CI of slope (per year)
 
 
 def build_robust_season_trend_series(
@@ -85,14 +86,25 @@ def build_robust_season_trend_series(
 
 	detrended = s - season_component
 	x = (idx - idx[0]).days.to_numpy()
-	slope = calculate_slope(detrended.to_numpy(), x)
 
-	# Axiom: If using mean seasonality, we likely want mass conservation,
-	# so we should use the Mean for the intercept as well, rather than Median.
+    # Use CI function to get robust stats
+    # slope_yr, intercept, lo_yr, hi_yr
+	slope_yr, intercept, lo_yr, hi_yr = theilsen_trend_ci(pd.Series(detrended.to_numpy(), index=idx))
+
+    # Convert back to per-day for modeling
+	slope = slope_yr / 365.25
+
+    # Check if we should override intercept based on seasonal_agg (Mean mass conservation)
 	if seasonal_agg == "mean":
 		intercept = float(np.mean(detrended.to_numpy() - slope * x))
-	else:
-		intercept = float(np.median(detrended.to_numpy() - slope * x))
+	# Else keep median intercept from theilsen_trend_ci (it uses median internally in fallback,
+    # but scipy returns intercept too? wbm.trends.theilsen_trend_ci returns intercept.
+    # Note: Scipy TheilSen intercept is median-based.
+
+    # Wait, theilsen_trend_ci returns intercept. But if I override it?
+    # I should use the one consistent with my logic.
+    # If seasonal_agg is median, use median intercept (default).
+    # If seasonal_agg is mean, use mean intercept.
 
 	trend_component = pd.Series(intercept + slope * x, index=idx)
 	deterministic_hist = season_component + trend_component
@@ -147,6 +159,7 @@ def build_robust_season_trend_series(
 		trend_component=trend_component,
 		residuals=residuals,
         transformation=transformation,
+        slope_ci_per_year=(lo_yr, hi_yr)
 	)
 
 
