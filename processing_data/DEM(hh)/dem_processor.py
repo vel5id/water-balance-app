@@ -5,11 +5,19 @@ import re
 import rasterio
 from rasterio.mask import mask
 from rasterio.warp import reproject, Resampling
-import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from shapely.geometry import mapping, Polygon
+from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+
+# Try to import cupy for GPU acceleration
+try:
+    import cupy as cp
+    HAS_CUPY = True
+except ImportError:
+    HAS_CUPY = False
 
 # --- КОНФИГУРАЦИЯ ---
 
@@ -74,8 +82,11 @@ def calculate_test_water_mask(b03_path, b08_path, scl_path, threshold):
     water_mask = np.nan_to_num(ndwi) > threshold
     return water_mask
 
-def calculate_ndwi_and_mask(b03_path, b08_path, scl_path):
-    """Рассчитывает NDWI и возвращает бинарную маску воды."""
+def calculate_ndwi_and_mask(b03_path, b08_path, scl_path, use_gpu=False):
+    """Рассчитывает NDWI и возвращает бинарную маску воды.
+
+    Если use_gpu=True и доступен cupy, вычисления переносятся на GPU.
+    """
     with rasterio.open(b03_path) as green_src:
         green = green_src.read(1).astype('float32')
         profile = green_src.profile
@@ -89,21 +100,50 @@ def calculate_ndwi_and_mask(b03_path, b08_path, scl_path):
     with rasterio.open(scl_path) as scl_src:
         scl_data = scl_src.read(1, out_shape=target_shape, resampling=Resampling.nearest)
     
-    cloud_mask = np.isin(scl_data, [3, 8, 9, 10, 11])
-    green[cloud_mask] = np.nan
-    nir[cloud_mask] = np.nan
+    if use_gpu and HAS_CUPY:
+        # Move data to GPU
+        green_gpu = cp.array(green)
+        nir_gpu = cp.array(nir)
+        scl_gpu = cp.array(scl_data)
 
-    np.seterr(divide='ignore', invalid='ignore')
-    ndwi = (green - nir) / (green + nir)
-    
-    water_mask = np.nan_to_num(ndwi) > 0.275  # Понижен порог до 0.275
+        # Cloud mask on GPU
+        cloud_mask = cp.isin(scl_gpu, cp.array([3, 8, 9, 10, 11]))
+        green_gpu[cloud_mask] = cp.nan
+        nir_gpu[cloud_mask] = cp.nan
+
+        # NDWI on GPU
+        ndwi_gpu = (green_gpu - nir_gpu) / (green_gpu + nir_gpu)
+        water_mask_gpu = cp.nan_to_num(ndwi_gpu) > 0.275
+
+        # Move result back to CPU
+        water_mask = cp.asnumpy(water_mask_gpu)
+    else:
+        cloud_mask = np.isin(scl_data, [3, 8, 9, 10, 11])
+        green[cloud_mask] = np.nan
+        nir[cloud_mask] = np.nan
+
+        np.seterr(divide='ignore', invalid='ignore')
+        ndwi = (green - nir) / (green + nir)
+        water_mask = np.nan_to_num(ndwi) > 0.275
+
     return water_mask, crs, transform
 
 # --- ОСНОВНОЙ СКРИПТ ---
 
-def get_max_water_mask(sentinel_dir):
-    """Находит маску максимального затопления по всем снимкам."""
-    print("Шаг 1: Поиск максимальной площади затопления по снимкам Sentinel...")
+def process_single_scene(args):
+    """Обработка одного снимка для параллельного выполнения."""
+    date, b03, b08, scl, use_gpu = args
+    try:
+        water_mask, crs, transform = calculate_ndwi_and_mask(b03, b08, scl, use_gpu=use_gpu)
+        current_area = np.sum(water_mask)
+        return date, current_area, water_mask, crs, transform
+    except Exception as e:
+        print(f"Ошибка при обработке снимка от {date}: {e}")
+        return date, 0, None, None, None
+
+def get_max_water_mask(sentinel_dir, use_gpu=False):
+    """Находит маску максимального затопления по всем снимкам (многопоточно)."""
+    print("Шаг 1: Поиск максимальной площади затопления по снимкам Sentinel (многопоточно)...")
     file_groups = find_sentinel_files(sentinel_dir)
     if not file_groups:
         raise FileNotFoundError("Не найдено ни одного набора снимков Sentinel.")
@@ -113,22 +153,28 @@ def get_max_water_mask(sentinel_dir):
     max_mask_crs = None
     max_mask_transform = None
     
-    print("ДИАГНОСТИКА МАСКИ ВОДЫ:")
-    print("Тестируем разные пороги NDWI...")
+    # Prepare arguments for parallel processing
+    process_args = [(date, b03, b08, scl, use_gpu) for date, b03, b08, scl in file_groups]
 
-    for i, (date, b03, b08, scl) in enumerate(file_groups):
-        print(f"  - Анализ снимка от {date} ({i+1}/{len(file_groups)})")
-        water_mask, crs, transform = calculate_ndwi_and_mask(b03, b08, scl)
-        current_area = np.sum(water_mask)
+    # Use ThreadPoolExecutor for I/O bound tasks (reading files)
+    # Number of workers can be adjusted, using a reasonable default
+    num_workers = min(len(file_groups), multiprocessing.cpu_count() * 2)
+
+    print(f"Запуск {num_workers} потоков для обработки {len(file_groups)} снимков...")
+
+    results = []
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        results = list(executor.map(process_single_scene, process_args))
+
+    for i, (date, current_area, water_mask, crs, transform) in enumerate(results):
+        if water_mask is None:
+            continue
+
+        print(f"  - Анализ снимка от {date} ({i+1}/{len(results)}): {current_area} пикселей")
         
-        # Диагностика только для первого снимка
+        # Diagnostic for the first image (optional, simplified in parallel version)
         if i == 0:
-            print(f"    Диагностика NDWI для {date}:")
-            # Тестируем разные пороги
-            for threshold in [0.0, 0.1, 0.2, 0.25, 0.275, 0.3, 0.35, 0.4]:
-                test_mask = calculate_test_water_mask(b03, b08, scl, threshold)
-                test_area = np.sum(test_mask)
-                print(f"      Порог {threshold}: {test_area} пикселей воды")
+            print(f"    Диагностика NDWI для {date} (порог 0.275): {current_area} пикселей воды")
         
         if current_area > max_area:
             max_area = current_area
@@ -137,6 +183,9 @@ def get_max_water_mask(sentinel_dir):
             max_mask_transform = transform
             print(f"    > Новая максимальная площадь найдена: {max_area} пикселей")
     
+    if max_water_mask is None:
+        raise ValueError("Не удалось успешно обработать ни один снимок.")
+
     print(f"\nИтоговая максимальная маска: {max_area} пикселей")
     
     # Сохраняем максимальную маску NDWI в GeoTIFF
@@ -648,8 +697,15 @@ def main():
         os.makedirs(OUTPUT_DIR)
         print(f"Создана папка для результатов: {OUTPUT_DIR}")
         
+    # Check for GPU
+    use_gpu = HAS_CUPY
+    if use_gpu:
+        print("GPU ускорение доступно (cupy).")
+    else:
+        print("GPU ускорение не доступно (cupy не установлен), используем CPU.")
+
     # Шаг 1
-    max_water_mask, crs, transform = get_max_water_mask(SENTINEL_ROOT_DIR)
+    max_water_mask, crs, transform = get_max_water_mask(SENTINEL_ROOT_DIR, use_gpu=use_gpu)
     
     # Шаг 2
     create_area_volume_curve(DEM_PATH, max_water_mask, crs, transform, OUTPUT_DIR)

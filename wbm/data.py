@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import pandas as pd
 import numpy as np
-from typing import Tuple
+from typing import Tuple, List
+from concurrent.futures import ThreadPoolExecutor
+import sqlite3
 
 
 def load_baseline(
@@ -46,7 +48,6 @@ def load_era5_daily(path: str) -> pd.DataFrame:
             df = df.sort_values("date").reset_index(drop=True)
         return df
     if ext in (".db", ".sqlite", ".sqlite3"):
-        import sqlite3
         tables = [
             ("era5_t2m_c", "t2m_c"),
             ("era5_runoff_mm", "runoff_mm"),
@@ -77,8 +78,25 @@ def load_era5_daily(path: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _load_single_sqlite(args: Tuple[str, str, str, str]) -> pd.DataFrame:
+    """Helper to load a single SQLite table into a DataFrame."""
+    sub, db_name, table, col = args
+    if not os.path.exists(db_name):
+        return pd.DataFrame()
+    try:
+        with sqlite3.connect(db_name) as conn:
+            df = pd.read_sql_query(f"SELECT date, value as {col} FROM {table}", conn)
+        if df.empty or "date" not in df.columns:
+            return pd.DataFrame()
+        df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
 def load_era5_from_raw_nc_dbs(raw_nc_root: str) -> pd.DataFrame:
     """Assemble ERA5 daily data from per-variable SQLite files inside raw_nc subfolders.
+    Uses multi-threading to speed up loading from multiple database files.
 
     Expected layout (each optional):
       raw_nc/temperature/era5_t2m_c.sqlite (table era5_t2m_c)
@@ -94,7 +112,6 @@ def load_era5_from_raw_nc_dbs(raw_nc_root: str) -> pd.DataFrame:
     """
     if not os.path.exists(raw_nc_root):
         return pd.DataFrame()
-    import sqlite3
 
     specs = [
         ("temperature", "era5_t2m_c.sqlite", "era5_t2m_c", "t2m_c"),
@@ -103,23 +120,26 @@ def load_era5_from_raw_nc_dbs(raw_nc_root: str) -> pd.DataFrame:
         ("runoff", "era5_runoff_mm.sqlite", "era5_runoff_mm", "runoff_mm"),
         ("snow", "era5_snow_depth_m.sqlite", "era5_snow_depth_m", "snow_depth_m"),
     ]
-    frames: list[pd.DataFrame] = []
+
+    # Filter specs for existing files
+    valid_specs = []
     for sub, db_name, table, col in specs:
         db_path = os.path.join(raw_nc_root, sub, db_name)
-        if not os.path.exists(db_path):
-            continue
-        try:
-            with sqlite3.connect(db_path) as conn:
-                df = pd.read_sql_query(f"SELECT date, value as {col} FROM {table}", conn)
-            if df.empty or "date" not in df.columns:
-                continue
-            df["date"] = pd.to_datetime(df["date"]).dt.normalize()
-            frames.append(df)
-        except Exception:
-            # Skip corrupt / unexpected files quietly
-            continue
+        if os.path.exists(db_path):
+            valid_specs.append((sub, db_path, table, col))
+
+    if not valid_specs:
+        return pd.DataFrame()
+
+    # Use multi-threading to load databases in parallel
+    with ThreadPoolExecutor(max_workers=len(valid_specs)) as executor:
+        results = list(executor.map(_load_single_sqlite, valid_specs))
+
+    frames = [df for df in results if not df.empty]
+
     if not frames:
         return pd.DataFrame()
+
     out = frames[0]
     for f in frames[1:]:
         out = out.merge(f, on="date", how="outer")
